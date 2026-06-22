@@ -1,0 +1,147 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationIcon>Icon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Remove="Assets\Back.png" />
+    <None Remove="Assets\BackArrow.png" />
+    <None Remove="Assets\BackGray.png" />
+    <None Remove="Assets\Beer.png" />
+    <None Remove="Assets\Browse_Green.png" />
+    <None Remove="Assets\Browse_Red.png" />
+    <None Remove="Assets\Button_Off.png" />
+    <None Remove="Assets\Button_On.png" />
+    <None Remove="Assets\CaptureSettings.png" />
+    <None Remove="Assets\CaptureSettingsGray.png" />
+    <None Remove="Assets\Diploma.png" />
+    <None Remove="Assets\Discord.png" />
+    <None Remove="Assets\Help.png" />
+    <None Remove="Assets\High_Green.png" />
+    <None Remove="Assets\High_Red.png" />
+    <None Remove="Assets\Home.png" />
+    <None Remove="Assets\Icon.ico" />
+    <None Remove="Assets\Info.png" />
+    <None Remove="Assets\Low_Green.png" />
+    <None Remove="Assets\Low_Red.png" />
+    <None Remove="Assets\MainScreenLogo.png" />
+    <None Remove="Assets\Medium_Green.png" />
+    <None Remove="Assets\Medium_Red.png" />
+    <None Remove="Assets\Meta.png" />
+    <None Remove="Assets\Meta_Page_1.png" />
+    <None Remove="Assets\Meta_Page_2.png" />
+    <None Remove="Assets\Meta_Page_3.png" />
+    <None Remove="Assets\Meta_Page_4.png" />
+    <None Remove="Assets\Meta_Page_5.png" />
+    <None Remove="Assets\Monitor_Green.png" />
+    <None Remove="Assets\Monitor_Orange.png" />
+    <None Remove="Assets\Monitor_Red.png" />
+    <None Remove="Assets\MoreInfo.png" />
+    <None Remove="Assets\Next.png" />
+    <None Remove="Assets\NextGray.png" />
+    <None Remove="Assets\NvidiaProfileInspector.png" />
+    <None Remove="Assets\RecommendedSettings.png" />
+    <None Remove="Assets\Remove.png" />
+    <None Remove="Assets\RemoveGray.png" />
+    <None Remove="Assets\Settings.png" />
+    <None Remove="Assets\Snail.png" />
+    <None Remove="Assets\Snail.wav" />
+    <None Remove="Assets\SteamVR.png" />
+    <None Remove="Assets\SteamVR_Page_1.png" />
+    <None Remove="Assets\SteamVR_Page_2.png" />
+    <None Remove="Assets\SteamVR_Page_3.png" />
+    <None Remove="Assets\SteamVR_Page_4.png" />
+    <None Remove="Assets\SteamVR_Page_5.png" />
+    <None Remove="Assets\VD.png" />
+    <None Remove="Assets\VD_Page_1.png" />
+    <None Remove="Assets\VD_Page_2.png" />
+    <None Remove="Assets\VD_Page_3.png" />
+    <None Remove="Assets\VD_Page_4.png" />
+    <None Remove="Assets\VD_Page_5.png" />
+    <None Remove="Assets\VD_Page_6.png" />
+    <None Remove="Assets\VerticalLine.png" />
+    <None Remove="Assets\VR_Green.png" />
+    <None Remove="Assets\VR_Orange.png" />
+    <None Remove="Assets\VR_Red.png" />
+    <None Remove="Assets\Youtube.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Icon.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\Back.png" />
+    <EmbeddedResource Include="Assets\BackArrow.png" />
+    <EmbeddedResource Include="Assets\BackGray.png" />
+    <EmbeddedResource Include="Assets\Beer.png" />
+    <EmbeddedResource Include="Assets\Browse_Green.png" />
+    <EmbeddedResource Include="Assets\Browse_Red.png" />
+    <EmbeddedResource Include="Assets\Button_Off.png" />
+    <EmbeddedResource Include="Assets\Button_On.png" />
+    <EmbeddedResource Include="Assets\CaptureSettings.png" />
+    <EmbeddedResource Include="Assets\CaptureSettingsGray.png" />
+    <EmbeddedResource Include="Assets\Diploma.png" />
+    <EmbeddedResource Include="Assets\Discord.png" />
+    <EmbeddedResource Include="Assets\Help.png" />
+    <EmbeddedResource Include="Assets\High_Green.png" />
+    <EmbeddedResource Include="Assets\High_Red.png" />
+    <EmbeddedResource Include="Assets\Home.png" />
+    <EmbeddedResource Include="Assets\Icon.ico" />
+    <EmbeddedResource Include="Assets\Info.png" />
+    <EmbeddedResource Include="Assets\Low_Green.png" />
+    <EmbeddedResource Include="Assets\Low_Red.png" />
+    <EmbeddedResource Include="Assets\MainScreenLogo.png" />
+    <EmbeddedResource Include="Assets\Medium_Green.png" />
+    <EmbeddedResource Include="Assets\Medium_Red.png" />
+    <EmbeddedResource Include="Assets\Meta.png" />
+    <EmbeddedResource Include="Assets\Meta_Page_1.png" />
+    <EmbeddedResource Include="Assets\Meta_Page_2.png" />
+    <EmbeddedResource Include="Assets\Meta_Page_3.png" />
+    <EmbeddedResource Include="Assets\Meta_Page_4.png" />
+    <EmbeddedResource Include="Assets\Meta_Page_5.png" />
+    <EmbeddedResource Include="Assets\Monitor_Green.png" />
+    <EmbeddedResource Include="Assets\Monitor_Orange.png" />
+    <EmbeddedResource Include="Assets\Monitor_Red.png" />
+    <EmbeddedResource Include="Assets\MoreInfo.png" />
+    <EmbeddedResource Include="Assets\Next.png" />
+    <EmbeddedResource Include="Assets\NextGray.png" />
+    <EmbeddedResource Include="Assets\NvidiaProfileInspector.png" />
+    <EmbeddedResource Include="Assets\RecommendedSettings.png" />
+    <EmbeddedResource Include="Assets\Remove.png" />
+    <EmbeddedResource Include="Assets\RemoveGray.png" />
+    <EmbeddedResource Include="Assets\Settings.png" />
+    <EmbeddedResource Include="Assets\Snail.png" />
+    <EmbeddedResource Include="Assets\Snail.wav" />
+    <EmbeddedResource Include="Assets\SteamVR.png" />
+    <EmbeddedResource Include="Assets\SteamVR_Page_1.png" />
+    <EmbeddedResource Include="Assets\SteamVR_Page_2.png" />
+    <EmbeddedResource Include="Assets\SteamVR_Page_3.png" />
+    <EmbeddedResource Include="Assets\SteamVR_Page_4.png" />
+    <EmbeddedResource Include="Assets\SteamVR_Page_5.png" />
+    <EmbeddedResource Include="Assets\VD.png" />
+    <EmbeddedResource Include="Assets\VD_Page_1.png" />
+    <EmbeddedResource Include="Assets\VD_Page_2.png" />
+    <EmbeddedResource Include="Assets\VD_Page_3.png" />
+    <EmbeddedResource Include="Assets\VD_Page_4.png" />
+    <EmbeddedResource Include="Assets\VD_Page_5.png" />
+    <EmbeddedResource Include="Assets\VD_Page_6.png" />
+    <EmbeddedResource Include="Assets\VerticalLine.png" />
+    <EmbeddedResource Include="Assets\VR_Green.png" />
+    <EmbeddedResource Include="Assets\VR_Orange.png" />
+    <EmbeddedResource Include="Assets\VR_Red.png" />
+    <EmbeddedResource Include="Assets\Youtube.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Core\" />
+    <Folder Include="Presets\" />
+  </ItemGroup>
+
+</Project>
