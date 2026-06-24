@@ -10,6 +10,14 @@
 
 ---
 
+## Video Tutorial
+
+Watch the full setup and usage guide here:
+
+▶️ https://www.youtube.com/watch?v=piDV7o6Ja-I
+
+---
+
 ## Features
 
 ### Graphics Profile Management
