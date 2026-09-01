@@ -46,6 +46,8 @@
     <None Remove="Assets\Next.png" />
     <None Remove="Assets\NextGray.png" />
     <None Remove="Assets\NvidiaProfileInspector.png" />
+    <None Remove="Assets\Play_Off.png" />
+    <None Remove="Assets\Play_On.png" />
     <None Remove="Assets\RecommendedSettings.png" />
     <None Remove="Assets\Remove.png" />
     <None Remove="Assets\RemoveGray.png" />
@@ -113,6 +115,8 @@
     <EmbeddedResource Include="Assets\Next.png" />
     <EmbeddedResource Include="Assets\NextGray.png" />
     <EmbeddedResource Include="Assets\NvidiaProfileInspector.png" />
+    <EmbeddedResource Include="Assets\Play_Off.png" />
+    <EmbeddedResource Include="Assets\Play_On.png" />
     <EmbeddedResource Include="Assets\RecommendedSettings.png" />
     <EmbeddedResource Include="Assets\Remove.png" />
     <EmbeddedResource Include="Assets\RemoveGray.png" />
