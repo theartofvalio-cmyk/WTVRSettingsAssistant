@@ -55,6 +55,8 @@
     <None Remove="Assets\Snail.png" />
     <None Remove="Assets\Snail.wav" />
     <None Remove="Assets\SteamVR.png" />
+    <None Remove="Assets\Update_Green.png" />
+    <None Remove="Assets\Update_Yellow.png" />
     <None Remove="Assets\SteamVR_Page_1.png" />
     <None Remove="Assets\SteamVR_Page_2.png" />
     <None Remove="Assets\SteamVR_Page_3.png" />
@@ -124,6 +126,8 @@
     <EmbeddedResource Include="Assets\Snail.png" />
     <EmbeddedResource Include="Assets\Snail.wav" />
     <EmbeddedResource Include="Assets\SteamVR.png" />
+    <EmbeddedResource Include="Assets\Update_Green.png" />
+    <EmbeddedResource Include="Assets\Update_Yellow.png" />
     <EmbeddedResource Include="Assets\SteamVR_Page_1.png" />
     <EmbeddedResource Include="Assets\SteamVR_Page_2.png" />
     <EmbeddedResource Include="Assets\SteamVR_Page_3.png" />

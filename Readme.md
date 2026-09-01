@@ -55,6 +55,15 @@ Watch the full setup and usage guide here:
 * Built-in help and recommendation tools
 * Fun hidden easter eggs
 
+#### Easter Egg Commands
+
+On the main screen, click the large War Thunder logo first, then enter one of these arrow-key sequences:
+
+* `↑ ↑ ↓ ↓ ← → ← →`
+* `← ← → → ↑ ↓`
+
+Have fun. ;)
+
 ---
 
 ## Requirements

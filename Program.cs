@@ -5,13 +5,16 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Media;
+using System.Net.Http;
 using System.Threading.Tasks;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text.Json;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows.Forms;
 
@@ -131,6 +134,9 @@ public class MainForm : Form
     // Change these to true later if you want to re-enable F12 layout editing and external layout files.
     private const bool LayoutEditorEnabled = false;
     private const bool LoadExternalLayoutFiles = false;
+    private const string CurrentVersion = "1.1";
+    private const string GitHubLatestReleaseApi = "https://api.github.com/repos/theartofvalio-cmyk/WTVRSettingsAssistant/releases/latest";
+    private const string GitHubReleasesUrl = "https://github.com/theartofvalio-cmyk/WTVRSettingsAssistant/releases";
 
     private const string BakedMainLayoutJson = """"
 {
@@ -151,40 +157,40 @@ public class MainForm : Form
     "FontSize": 38
   },
   "VRButton": {
-    "X": 882,
-    "Y": 169,
-    "Width": 698,
-    "Height": 263,
+    "X": 920,
+    "Y": 310,
+    "Width": 560,
+    "Height": 241,
     "ZOrder": 2,
     "FontSize": 0
   },
   "MonitorButton": {
-    "X": 870,
-    "Y": 448,
-    "Width": 713,
-    "Height": 260,
+    "X": 920,
+    "Y": 55,
+    "Width": 560,
+    "Height": 234,
     "ZOrder": 3,
     "FontSize": 0
   },
   "PlayButton": {
-    "X": 1010,
-    "Y": 735,
-    "Width": 355,
-    "Height": 96,
+    "X": 830,
+    "Y": 570,
+    "Width": 740,
+    "Height": 200,
     "ZOrder": 4,
     "FontSize": 0
   },
   "InfoIcon": {
-    "X": 1408,
-    "Y": 45,
+    "X": 1516,
+    "Y": 168,
     "Width": 81,
     "Height": 81,
     "ZOrder": 4,
     "FontSize": 0
   },
   "SettingsIcon": {
-    "X": 1498,
-    "Y": 28,
+    "X": 1500,
+    "Y": 25,
     "Width": 114,
     "Height": 115,
     "ZOrder": 5,
@@ -1312,6 +1318,7 @@ render{
         public bool Visible { get; set; } = true;
         public bool IsText { get; init; }
         public bool HoverZoom { get; set; }
+        public string? ToolTipText { get; set; }
     }
 
     private sealed class MainPageCanvas : Control
@@ -1325,6 +1332,14 @@ render{
         private readonly Func<float, FontStyle, Font> _fontFactory;
         private readonly Color _textColor;
         private readonly Color _handleColor = Color.FromArgb(0, 210, 255);
+        private readonly ToolTip _toolTip = new()
+        {
+            InitialDelay = 350,
+            ReshowDelay = 100,
+            AutoPopDelay = 6000,
+            ShowAlways = true
+        };
+        private string? _visibleToolTipKey;
 
         private MainCanvasItem? _selectedItem;
         private MainCanvasItem? _dragItem;
@@ -1449,6 +1464,15 @@ render{
             {
                 item.ClickAction = clickAction;
                 Invalidate();
+            }
+        }
+
+        public void SetItemToolTip(string key, string toolTipText)
+        {
+            MainCanvasItem? item = FindItem(key);
+            if (item != null)
+            {
+                item.ToolTipText = toolTipText;
             }
         }
 
@@ -2158,6 +2182,13 @@ render{
                     hoverItem?.ClickAction != null &&
                     !hoverItem.Key.Equals("MainLogo", StringComparison.OrdinalIgnoreCase);
 
+                string? toolTipKey = string.IsNullOrWhiteSpace(hoverItem?.ToolTipText) ? null : hoverItem.Key;
+                if (!string.Equals(_visibleToolTipKey, toolTipKey, StringComparison.Ordinal))
+                {
+                    _visibleToolTipKey = toolTipKey;
+                    _toolTip.SetToolTip(this, toolTipKey == null ? null : hoverItem!.ToolTipText);
+                }
+
                 Cursor = showHandCursor ? Cursors.Hand : Cursors.Default;
                 return;
             }
@@ -2221,6 +2252,9 @@ render{
                 _hoverZoomItem = null;
                 Invalidate();
             }
+
+            _visibleToolTipKey = null;
+            _toolTip.SetToolTip(this, null);
         }
 
         protected override void OnMouseDoubleClick(MouseEventArgs e)
@@ -2803,6 +2837,8 @@ render{
     private GraphicsApi _desktopGraphicsApi = GraphicsApi.DX12;
     private GraphicsApi _vrGraphicsApi = GraphicsApi.DX12;
     private bool _switchControlsWithProfile;
+    private bool _updatePromptShown;
+    private string _latestReleaseUrl = GitHubReleasesUrl;
 
     private ComboBox? _desktopGraphicsApiCombo;
     private ComboBox? _vrGraphicsApiCombo;
@@ -2859,6 +2895,8 @@ render{
 
     private Image _playOn = null!;
     private Image _playOff = null!;
+    private Image _updateGreen = null!;
+    private Image _updateYellow = null!;
 
     private Image _browseRed = null!;
     private Image _browseGreen = null!;
@@ -2961,6 +2999,8 @@ render{
         BuildSettingsScreen();
         BuildAboutScreen();
         BuildRecommendedScreen();
+
+        Shown += async (_, _) => await CheckForUpdatesAsync(false);
 
         if (LoadExternalLayoutFiles)
         {
@@ -3134,6 +3174,8 @@ render{
 
         _playOn = SafeLoadImage("play_on.png");
         _playOff = SafeLoadImage("play_off.png");
+        _updateGreen = SafeLoadImage("Update_Green.png");
+        _updateYellow = SafeLoadImage("Update_Yellow.png");
 
         _browseRed = SafeLoadImage("Browse_Red.png");
         _browseGreen = SafeLoadImage("Browse_Green.png");
@@ -3322,25 +3364,47 @@ render{
         _mainPanel.Controls.Add(_mainCanvas);
 
         _mainCanvas.AddImage("MainLogo", _mainLogo, new Rectangle(0, -11, 874, 889), ArmSecretCode);
-        _mainCanvas.AddText("VersionText", "Version 1.1", new Rectangle(300, 685, 275, 119), 50.48309f, FontStyle.Regular);
-        _mainCanvas.AddImage("VRButton", _vrOrange, new Rectangle(889, 153, 676, 291), ApplyVrMode);
-        _mainCanvas.AddImage("MonitorButton", _monitorOrange, new Rectangle(883, 456, 689, 288), ApplyMonitorMode);
-        _mainCanvas.AddImage("PlayButton", _playOff, new Rectangle(1010, 735, 355, 96), null);
+        _mainCanvas.AddText("VersionText", $"Version {CurrentVersion}", new Rectangle(300, 685, 275, 119), 50.48309f, FontStyle.Regular);
+        _mainCanvas.AddImage("VRButton", _vrOrange, new Rectangle(920, 310, 560, 241), ApplyVrMode);
+        _mainCanvas.AddImage("MonitorButton", _monitorOrange, new Rectangle(920, 55, 560, 234), ApplyMonitorMode);
+        _mainCanvas.AddImage("PlayButton", _playOff, new Rectangle(830, 570, 740, 200), null);
 
         if (_discordImage != null)
         {
-            _mainCanvas.AddImage("DiscordButton", _discordImage, new Rectangle(1375, 762, 228, 69), OpenDiscord);
+            _mainCanvas.AddImage("DiscordButton", _discordImage, new Rectangle(1415, 777, 175, 53), OpenDiscord);
         }
         else
         {
-            _mainCanvas.AddText("DiscordButton", "DISCORD", new Rectangle(1375, 762, 228, 69), 34f, FontStyle.Bold, StringAlignment.Center, StringAlignment.Center, OpenDiscord);
+            _mainCanvas.AddText("DiscordButton", "DISCORD", new Rectangle(1415, 777, 175, 53), 26f, FontStyle.Bold, StringAlignment.Center, StringAlignment.Center, OpenDiscord);
         }
 
-        _mainCanvas.AddImage("InfoIcon", _infoImage, new Rectangle(1408, 45, 81, 81), () =>
+        if (_beerImage != null)
+        {
+            _mainCanvas.AddImage("BeerButton", _beerImage, new Rectangle(50, 697, 105, 120), ShowBeerMessage);
+        }
+        else
+        {
+            _mainCanvas.AddText("BeerButton", "SUPPORT", new Rectangle(42, 727, 120, 55), 19f, FontStyle.Bold, StringAlignment.Center, StringAlignment.Center, ShowBeerMessage);
+        }
+        _mainCanvas.SetItemToolTip("BeerButton", "Buy me a beer to support this project");
+
+        if (_youtubeImage != null)
+        {
+            _mainCanvas.AddImage("YoutubeButton", _youtubeImage, new Rectangle(680, 697, 125, 125), OpenYouTube);
+        }
+        else
+        {
+            _mainCanvas.AddText("YoutubeButton", "VIDEO", new Rectangle(680, 730, 125, 55), 19f, FontStyle.Bold, StringAlignment.Center, StringAlignment.Center, OpenYouTube);
+        }
+        _mainCanvas.SetItemToolTip("YoutubeButton", "Subscribe to my War Thunder VR channel on YouTube");
+
+        _mainCanvas.AddImage("UpdateButton", _updateGreen, new Rectangle(1516, 291, 81, 81), CheckForUpdatesFromButton);
+
+        _mainCanvas.AddImage("InfoIcon", _infoImage, new Rectangle(1516, 168, 81, 81), () =>
         {
             ShowScreen(_aboutPanel);
         });
-        _mainCanvas.AddImage("SettingsIcon", _settingsImage, new Rectangle(1498, 28, 114, 114), () =>
+        _mainCanvas.AddImage("SettingsIcon", _settingsImage, new Rectangle(1500, 25, 114, 114), () =>
         {
             ShowScreen(_settingsPanel);
         });
@@ -3946,62 +4010,80 @@ render{
 
         _aboutPanel.Controls.Add(_aboutCanvas);
 
-        string aboutText =
-            "Hi, you probably haven’t heard of me, and that’s completely fine. :)\n\n" +
-            "My name is Valentin, and I’m a War Thunder VR player and content creator. I enjoy making guides\n" +
-            "and helping people optimize their game for a smoother and more enjoyable VR experience.\n\n" +
-            "I created this tool to help the War Thunder VR community switch more easily between VR and flat-screen play,\n" +
-            "without having to manually change settings every time. The goal is simple: make the process smoother, faster, and less frustrating.\n\n" +
-            "I’ll also be making an updated VR video guide that covers additional settings outside the game. For now, the included LOW, MEDIUM,\n" +
-            "and HIGH presets are based on real settings I’ve tested with people from our Discord community. I’ve worked with players one-on-one,\n" +
-            "optimizing their games across different types of hardware and testing what works best in practice.\n\n" +
-            "If you’re new to VR, these presets should help you get started much more easily and give you a solid foundation for your first War Thunder VR experience.\n\n" +
-            "Cheers,\n" +
-            "Val";
-
-        string supportText =
-            "This tool is completely free and open source.\n" +
-            "If you like what I do and you want to help me out\n" +
-            "to make more stuff like this, feel free to click Subscribe\n" +
-            "or buy me a Beer! :)";
+        _aboutCanvas.AddText(
+            "AboutTitle",
+            "WAR THUNDER VR SETTINGS ASSISTANT",
+            new Rectangle(40, 35, 1280, 65),
+            40f,
+            FontStyle.Bold,
+            StringAlignment.Near,
+            StringAlignment.Center);
 
         _aboutCanvas.AddText(
-            "AboutText",
-            aboutText,
-            new Rectangle(11, 10, 1511, 570),
-            23.744286f,
+            "AboutPurpose",
+            "A Windows utility for switching War Thunder between Desktop and VR configurations without manually replacing files every time. It can manage graphics profiles, DX11/DX12 renderer choices, optional control presets, and launch the game after the selected setup is applied.",
+            new Rectangle(40, 115, 1480, 120),
+            27f,
             FontStyle.Regular,
             StringAlignment.Near,
-            StringAlignment.Near
-        );
+            StringAlignment.Near);
+
+        _aboutCanvas.AddRectangle("AboutTopDivider", new Rectangle(40, 250, 1480, 2), Color.FromArgb(62, 82, 88));
+        _aboutCanvas.AddRectangle("AboutColumnDivider", new Rectangle(785, 285, 2, 410), Color.FromArgb(62, 82, 88));
 
         _aboutCanvas.AddText(
-            "SupportText",
-            supportText,
-            new Rectangle(9, 583, 809, 235),
-            27.381538f,
+            "HowToTitle",
+            "HOW TO USE",
+            new Rectangle(40, 275, 700, 55),
+            32f,
+            FontStyle.Bold,
+            StringAlignment.Near,
+            StringAlignment.Center);
+
+        _aboutCanvas.AddText(
+            "HowToText",
+            "1. Select War Thunder's config.blk and aces.exe.\n\n" +
+            "2. Load or capture a Desktop profile and choose DX11 or DX12.\n\n" +
+            "3. Select a built-in VR preset or enable CUSTOM VR .blk.\n\n" +
+            "4. Optionally configure separate Desktop and VR control presets.\n\n" +
+            "5. Press MONITOR or VR to apply the profile, then press PLAY.",
+            new Rectangle(40, 340, 700, 365),
+            25f,
+            FontStyle.Regular,
+            StringAlignment.Near,
+            StringAlignment.Near);
+
+        _aboutCanvas.AddText(
+            "PatchNotesTitle",
+            $"VERSION {CurrentVersion} HIGHLIGHTS",
+            new Rectangle(830, 275, 690, 55),
+            32f,
+            FontStyle.Bold,
+            StringAlignment.Near,
+            StringAlignment.Center);
+
+        _aboutCanvas.AddText(
+            "PatchNotesText",
+            "• Direct War Thunder launching through aces.exe\n\n" +
+            "• Independent DX11/DX12 selection for Desktop and VR\n\n" +
+            "• Optional Desktop and VR control-profile switching\n\n" +
+            "• Safe machine.blk controls-section backup and replacement\n\n" +
+            "• Clearer Settings layout, help text, and profile controls\n\n" +
+            "• Automatic GitHub update checking",
+            new Rectangle(830, 340, 690, 350),
+            24f,
+            FontStyle.Regular,
+            StringAlignment.Near,
+            StringAlignment.Near);
+
+        _aboutCanvas.AddText(
+            "OpenSourceText",
+            "Free and open source community software. This unofficial tool is not affiliated with, endorsed by, or sponsored by Gaijin Entertainment.",
+            new Rectangle(40, 735, 1160, 80),
+            22f,
             FontStyle.Italic,
             StringAlignment.Near,
-            StringAlignment.Near
-        );
-
-        if (_youtubeImage != null)
-        {
-            _aboutCanvas.AddImage("YoutubeButton", _youtubeImage, new Rectangle(781, 505, 345, 282), OpenYouTube);
-        }
-        else
-        {
-            _aboutCanvas.AddText("YoutubeButton", "SUBSCRIBE", new Rectangle(781, 505, 345, 282), 28f, FontStyle.Bold, StringAlignment.Center, StringAlignment.Center, OpenYouTube);
-        }
-
-        if (_beerImage != null)
-        {
-            _aboutCanvas.AddImage("BeerButton", _beerImage, new Rectangle(1180, 457, 301, 359), ShowBeerMessage);
-        }
-        else
-        {
-            _aboutCanvas.AddText("BeerButton", "BEER", new Rectangle(1180, 457, 301, 359), 28f, FontStyle.Bold, StringAlignment.Center, StringAlignment.Center, ShowBeerMessage);
-        }
+            StringAlignment.Center);
 
         _aboutCanvas.AddImage("InfoIcon", _infoImage, new Rectangle(1408, 45, 81, 81), () =>
         {
@@ -5851,6 +5933,331 @@ render{
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error
             );
+        }
+    }
+
+    private async void CheckForUpdatesFromButton()
+    {
+        await CheckForUpdatesAsync(true);
+    }
+
+    private async Task CheckForUpdatesAsync(bool interactive)
+    {
+        try
+        {
+            using HttpClient client = new HttpClient
+            {
+                Timeout = TimeSpan.FromSeconds(10)
+            };
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("WT-VR-Settings-Assistant");
+
+            string json = await client.GetStringAsync(GitHubLatestReleaseApi);
+            using JsonDocument document = JsonDocument.Parse(json);
+
+            string tag = document.RootElement.GetProperty("tag_name").GetString() ?? "";
+            string releaseUrl = document.RootElement.TryGetProperty("html_url", out JsonElement urlElement)
+                ? urlElement.GetString() ?? GitHubReleasesUrl
+                : GitHubReleasesUrl;
+
+            string? updatePackageUrl = null;
+            if (document.RootElement.TryGetProperty("assets", out JsonElement assetsElement) &&
+                assetsElement.ValueKind == JsonValueKind.Array)
+            {
+                updatePackageUrl = assetsElement
+                    .EnumerateArray()
+                    .Select(asset => new
+                    {
+                        Name = asset.TryGetProperty("name", out JsonElement nameElement) ? nameElement.GetString() ?? "" : "",
+                        Url = asset.TryGetProperty("browser_download_url", out JsonElement downloadElement) ? downloadElement.GetString() : null
+                    })
+                    .Where(asset => asset.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(asset.Url))
+                    .OrderByDescending(asset => asset.Name.Contains("WTVRSettingsAssistant", StringComparison.OrdinalIgnoreCase))
+                    .Select(asset => asset.Url)
+                    .FirstOrDefault();
+            }
+
+            if (!Version.TryParse(CurrentVersion, out Version? current) ||
+                !Version.TryParse(tag.Trim().TrimStart('v', 'V'), out Version? latest))
+            {
+                throw new InvalidOperationException("GitHub returned an unrecognized version number.");
+            }
+
+            bool updateAvailable = latest > current;
+            _latestReleaseUrl = releaseUrl;
+
+            if (_mainCanvas != null)
+            {
+                _mainCanvas.SetImage("UpdateButton", updateAvailable ? _updateYellow : _updateGreen);
+            }
+
+            if (updateAvailable && (interactive || !_updatePromptShown))
+            {
+                _updatePromptShown = true;
+                DialogResult answer = MessageBox.Show(
+                    this,
+                    $"War Thunder VR Settings Assistant {latest} is available.\n\n" +
+                    $"You are currently using version {current}.\n\n" +
+                    "Would you like to download and install it now?\n\n" +
+                    "Your saved settings and captured graphics profiles will be kept.",
+                    "Update available",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Information);
+
+                if (answer == DialogResult.Yes)
+                {
+                    if (string.IsNullOrWhiteSpace(updatePackageUrl))
+                    {
+                        MessageBox.Show(
+                            this,
+                            "This release does not contain a ZIP update package. The GitHub release page will open instead.",
+                            "Update package unavailable",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Information);
+                        OpenLatestReleasePage();
+                    }
+                    else
+                    {
+                        await DownloadAndInstallUpdateAsync(updatePackageUrl, latest);
+                    }
+                }
+            }
+            else if (interactive)
+            {
+                MessageBox.Show(
+                    this,
+                    $"Version {CurrentVersion} is up to date.",
+                    "No updates available",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+        }
+        catch (Exception ex)
+        {
+            if (interactive)
+            {
+                MessageBox.Show(
+                    this,
+                    "The update check could not be completed.\n\n" + ex.Message,
+                    "Update check failed",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+            }
+        }
+    }
+
+    private async Task DownloadAndInstallUpdateAsync(string packageUrl, Version latestVersion)
+    {
+        string? temporaryRoot = null;
+
+        try
+        {
+            if (!Uri.TryCreate(packageUrl, UriKind.Absolute, out Uri? packageUri) ||
+                !packageUri.Host.EndsWith("github.com", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("GitHub returned an invalid update-package address.");
+            }
+
+            UseWaitCursor = true;
+            Enabled = false;
+            SaveState();
+
+            temporaryRoot = Path.Combine(Path.GetTempPath(), "WTVRSettingsAssistantUpdate_" + Guid.NewGuid().ToString("N"));
+            string zipPath = Path.Combine(temporaryRoot, "update.zip");
+            string extractPath = Path.Combine(temporaryRoot, "package");
+            Directory.CreateDirectory(extractPath);
+
+            using (HttpClient client = new HttpClient { Timeout = TimeSpan.FromMinutes(5) })
+            {
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("WT-VR-Settings-Assistant");
+                using HttpResponseMessage response = await client.GetAsync(packageUri, HttpCompletionOption.ResponseHeadersRead);
+                response.EnsureSuccessStatusCode();
+                await using Stream source = await response.Content.ReadAsStreamAsync();
+                await using FileStream destination = new FileStream(zipPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                await source.CopyToAsync(destination);
+            }
+
+            ZipFile.ExtractToDirectory(zipPath, extractPath, overwriteFiles: true);
+
+            string executableName = Path.GetFileName(Application.ExecutablePath);
+            string? packagedExecutable = Directory
+                .EnumerateFiles(extractPath, executableName, SearchOption.AllDirectories)
+                .OrderBy(path => path.Length)
+                .FirstOrDefault();
+
+            if (packagedExecutable == null)
+            {
+                throw new InvalidDataException($"The update package does not contain {executableName}.");
+            }
+
+            string payloadRoot = Path.GetDirectoryName(packagedExecutable)!;
+            string updaterScriptPath = Path.Combine(Path.GetTempPath(), "WTVRSettingsAssistantUpdater_" + Guid.NewGuid().ToString("N") + ".ps1");
+            File.WriteAllText(updaterScriptPath, BuildUpdaterScript(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+
+            ProcessStartInfo updater = new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+            updater.ArgumentList.Add("-NoProfile");
+            updater.ArgumentList.Add("-ExecutionPolicy");
+            updater.ArgumentList.Add("Bypass");
+            updater.ArgumentList.Add("-File");
+            updater.ArgumentList.Add(updaterScriptPath);
+            updater.ArgumentList.Add("-ProcessId");
+            updater.ArgumentList.Add(Environment.ProcessId.ToString());
+            updater.ArgumentList.Add("-PayloadRoot");
+            updater.ArgumentList.Add(payloadRoot);
+            updater.ArgumentList.Add("-InstallRoot");
+            updater.ArgumentList.Add(AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar));
+            updater.ArgumentList.Add("-ExecutableName");
+            updater.ArgumentList.Add(executableName);
+            updater.ArgumentList.Add("-TemporaryRoot");
+            updater.ArgumentList.Add(temporaryRoot);
+
+            if (Process.Start(updater) == null)
+            {
+                throw new InvalidOperationException("The update helper could not be started.");
+            }
+
+            MessageBox.Show(
+                this,
+                $"Version {latestVersion} has been downloaded.\n\nThe app will now close, install the update, and relaunch automatically.",
+                "Update ready",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+
+            temporaryRoot = null; // The updater owns cleanup after this point.
+            Application.Exit();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                this,
+                "The update could not be installed. No application files were changed.\n\n" + ex.Message,
+                "Update failed",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            Enabled = true;
+            UseWaitCursor = false;
+
+            if (!string.IsNullOrWhiteSpace(temporaryRoot))
+            {
+                try
+                {
+                    Directory.Delete(temporaryRoot, recursive: true);
+                }
+                catch
+                {
+                    // Temporary files can be removed by Windows later if they are still in use.
+                }
+            }
+        }
+    }
+
+    private static string BuildUpdaterScript()
+    {
+        return """
+param(
+    [Parameter(Mandatory = $true)][int]$ProcessId,
+    [Parameter(Mandatory = $true)][string]$PayloadRoot,
+    [Parameter(Mandatory = $true)][string]$InstallRoot,
+    [Parameter(Mandatory = $true)][string]$ExecutableName,
+    [Parameter(Mandatory = $true)][string]$TemporaryRoot
+)
+
+$ErrorActionPreference = 'Stop'
+Wait-Process -Id $ProcessId -ErrorAction SilentlyContinue
+
+$preservedFolders = @('Settings', 'GraphicSettings')
+$backupRoot = Join-Path $TemporaryRoot 'backup'
+$replacedFiles = New-Object System.Collections.Generic.List[string]
+$files = Get-ChildItem -LiteralPath $PayloadRoot -Recurse -File
+try {
+    foreach ($file in $files) {
+        $relativePath = $file.FullName.Substring($PayloadRoot.Length).TrimStart('\', '/')
+        $topFolder = ($relativePath -split '[\\/]', 2)[0]
+        if ($preservedFolders -contains $topFolder) {
+            continue
+        }
+
+        $destination = Join-Path $InstallRoot $relativePath
+        $destinationFolder = Split-Path -Parent $destination
+        if ($destinationFolder) {
+            New-Item -ItemType Directory -Path $destinationFolder -Force | Out-Null
+        }
+
+        if (Test-Path -LiteralPath $destination -PathType Leaf) {
+            $backupPath = Join-Path $backupRoot $relativePath
+            $backupFolder = Split-Path -Parent $backupPath
+            New-Item -ItemType Directory -Path $backupFolder -Force | Out-Null
+            Copy-Item -LiteralPath $destination -Destination $backupPath -Force
+        }
+
+        $copied = $false
+        for ($attempt = 0; $attempt -lt 20 -and -not $copied; $attempt++) {
+            try {
+                Copy-Item -LiteralPath $file.FullName -Destination $destination -Force
+                $copied = $true
+            }
+            catch {
+                Start-Sleep -Milliseconds 250
+            }
+        }
+
+        if (-not $copied) {
+            throw "Could not replace $relativePath"
+        }
+
+        $replacedFiles.Add($relativePath)
+    }
+
+    $executablePath = Join-Path $InstallRoot $ExecutableName
+    Start-Process -FilePath $executablePath -WorkingDirectory $InstallRoot
+    Remove-Item -LiteralPath $TemporaryRoot -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+}
+catch {
+    foreach ($relativePath in $replacedFiles) {
+        $backupPath = Join-Path $backupRoot $relativePath
+        $destination = Join-Path $InstallRoot $relativePath
+        if (Test-Path -LiteralPath $backupPath -PathType Leaf) {
+            Copy-Item -LiteralPath $backupPath -Destination $destination -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    $executablePath = Join-Path $InstallRoot $ExecutableName
+    if (Test-Path -LiteralPath $executablePath -PathType Leaf) {
+        Start-Process -FilePath $executablePath -WorkingDirectory $InstallRoot
+    }
+
+    Add-Type -AssemblyName System.Windows.Forms
+    [System.Windows.Forms.MessageBox]::Show(
+        "The update could not be completed and the previous files were restored.`n`n$($_.Exception.Message)",
+        'Update failed',
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
+}
+""";
+    }
+
+    private void OpenLatestReleasePage()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = _latestReleaseUrl,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Could not open the release page", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
