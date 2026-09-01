@@ -6,10 +6,15 @@ Version 1.1 is a major usability and presentation update focused on easier profi
 
 - Added separate Desktop and VR graphics API selectors.
 - Added custom Desktop and VR `.blk` profile capture, replacement, and removal.
-- Added War Thunder `aces.exe` selection and direct game launching.
+- Added War Thunder `launcher.exe` selection and installation-aware game launching through `beac_wt_mlauncher.exe` when available.
 - Added optional Desktop/VR controls-profile switching through `machine.blk`.
 - Added automatic `machine.blk` detection plus contextual help for all controls files.
 - Added safer controls-section replacement with backups.
+- Fixed Desktop/VR graphics switching so the selected profile and VR flag are applied correctly.
+- Fixed controls switching to target both the active account and `last` `machine.blk` mirrors.
+- Added controls reapplication after War Thunder exits, preventing the running game from overwriting a newly selected profile.
+- Added Steam and standalone launch detection, forced-start arguments, and explicit VR/Monitor launch flags.
+- Fixed profile capture buttons so existing Desktop and VR profiles can be overwritten.
 - Added built-in Low, Medium, and High VR presets and recommendation pages.
 - Added recommended settings information for Meta Quest, SteamVR, and Virtual Desktop.
 - Redesigned and reorganized the Settings and Control Profiles screens for better spacing and readability.

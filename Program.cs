@@ -2837,6 +2837,9 @@ render{
     private GraphicsApi _desktopGraphicsApi = GraphicsApi.DX12;
     private GraphicsApi _vrGraphicsApi = GraphicsApi.DX12;
     private bool _switchControlsWithProfile;
+    private readonly System.Windows.Forms.Timer _controlsReapplyTimer = new System.Windows.Forms.Timer();
+    private string _pendingControlsPresetPath = "";
+    private string _pendingControlsProfileName = "";
     private bool _updatePromptShown;
     private string _latestReleaseUrl = GitHubReleasesUrl;
 
@@ -2990,6 +2993,9 @@ render{
         Resize += MainForm_Resize;
         ResizeEnd += (_, _) => SaveState();
         FormClosing += (_, _) => SaveState();
+
+        _controlsReapplyTimer.Interval = 1000;
+        _controlsReapplyTimer.Tick += (_, _) => ReapplyPendingControlsAfterGameExit();
 
         LoadAssets();
         LoadState();
@@ -3461,23 +3467,23 @@ render{
 
         _settingsCanvas.AddText(
             "GameExeTitle",
-            "WAR THUNDER / aces.exe",
-            new Rectangle(75, 265, 300, 40),
-            24f,
+            "WAR THUNDER LAUNCHER",
+            new Rectangle(75, 250, 300, 42),
+            21f,
             FontStyle.Regular,
             StringAlignment.Near,
             StringAlignment.Center);
         _settingsCanvas.AddRectangle(
             "GameExeField",
-            new Rectangle(75, 305, 300, 40),
+            new Rectangle(75, 292, 300, 28),
             _fieldColor,
             BrowseForWarThunderExe,
             path => SetWarThunderExePath(path));
         _settingsCanvas.AddText(
             "GameExePathText",
             "",
-            new Rectangle(85, 307, 280, 36),
-            12f,
+            new Rectangle(85, 293, 280, 26),
+            11f,
             FontStyle.Regular,
             StringAlignment.Near,
             StringAlignment.Center,
@@ -4042,7 +4048,7 @@ render{
 
         _aboutCanvas.AddText(
             "HowToText",
-            "1. Select War Thunder's config.blk and aces.exe.\n\n" +
+            "1. Select War Thunder's config.blk and launcher.exe.\n\n" +
             "2. Load or capture a Desktop profile and choose DX11 or DX12.\n\n" +
             "3. Select a built-in VR preset or enable CUSTOM VR .blk.\n\n" +
             "4. Optionally configure separate Desktop and VR control presets.\n\n" +
@@ -4064,7 +4070,7 @@ render{
 
         _aboutCanvas.AddText(
             "PatchNotesText",
-            "• Direct War Thunder launching through aces.exe\n\n" +
+            "• War Thunder launching through launcher.exe in forced-start mode\n\n" +
             "• Independent DX11/DX12 selection for Desktop and VR\n\n" +
             "• Optional Desktop and VR control-profile switching\n\n" +
             "• Safe machine.blk controls-section backup and replacement\n\n" +
@@ -4392,18 +4398,6 @@ render{
             return;
         }
 
-        if (targetSlot == FileSlot.Desktop && IsDesktopConfigured())
-        {
-            return;
-        }
-
-        if (targetSlot == FileSlot.CustomVr &&
-            !string.IsNullOrWhiteSpace(_customVrBlkPath) &&
-            File.Exists(_customVrBlkPath))
-        {
-            return;
-        }
-
         try
         {
             Directory.CreateDirectory(GraphicSettingsFolder);
@@ -4412,7 +4406,18 @@ render{
                 ? "DesktopSettings.blk"
                 : "VRSettings.blk";
 
-            string targetPath = Path.Combine(GraphicSettingsFolder, targetFileName);
+            string configuredTargetPath = targetSlot == FileSlot.Desktop ? _desktopBlkPath : _customVrBlkPath;
+            string targetPath = !string.IsNullOrWhiteSpace(configuredTargetPath) &&
+                                !PathsEqual(configuredTargetPath, _configBlkPath)
+                ? configuredTargetPath
+                : Path.Combine(GraphicSettingsFolder, targetFileName);
+
+            string? targetFolder = Path.GetDirectoryName(targetPath);
+            if (!string.IsNullOrWhiteSpace(targetFolder))
+            {
+                Directory.CreateDirectory(targetFolder);
+            }
+
             File.Copy(_configBlkPath, targetPath, true);
 
             if (targetSlot == FileSlot.Desktop)
@@ -4452,15 +4457,15 @@ render{
     {
         return !string.IsNullOrWhiteSpace(_warThunderExePath) &&
                File.Exists(_warThunderExePath) &&
-               Path.GetFileName(_warThunderExePath).Equals("aces.exe", StringComparison.OrdinalIgnoreCase);
+               Path.GetFileName(_warThunderExePath).Equals("launcher.exe", StringComparison.OrdinalIgnoreCase);
     }
 
     private void BrowseForWarThunderExe()
     {
         using OpenFileDialog dialog = new OpenFileDialog
         {
-            Title = "Locate War Thunder aces.exe",
-            Filter = "War Thunder executable (aces.exe)|aces.exe|Executable files (*.exe)|*.exe",
+            Title = "Locate War Thunder launcher.exe",
+            Filter = "War Thunder launcher (launcher.exe)|launcher.exe|Executable files (*.exe)|*.exe",
             CheckFileExists = true,
             Multiselect = false
         };
@@ -4468,7 +4473,7 @@ render{
         if (!string.IsNullOrWhiteSpace(_warThunderExePath) && File.Exists(_warThunderExePath))
         {
             dialog.InitialDirectory = Path.GetDirectoryName(_warThunderExePath);
-            dialog.FileName = "aces.exe";
+            dialog.FileName = "launcher.exe";
         }
         else if (IsConfigSelected())
         {
@@ -4500,9 +4505,9 @@ render{
             return;
         }
 
-        if (!Path.GetFileName(path).Equals("aces.exe", StringComparison.OrdinalIgnoreCase))
+        if (!Path.GetFileName(path).Equals("launcher.exe", StringComparison.OrdinalIgnoreCase))
         {
-            ShowWarning("Please select War Thunder's aces.exe file.");
+            ShowWarning("Please select War Thunder's launcher.exe file.");
             return;
         }
 
@@ -4579,19 +4584,20 @@ render{
             : _vrGraphicsApi;
     }
 
-    private void ApplyGraphicsApiToConfig(AppliedMode mode)
+    private bool ApplyGraphicsApiToConfig(AppliedMode mode)
     {
         if (mode == AppliedMode.None ||
             string.IsNullOrWhiteSpace(_configBlkPath) ||
             !File.Exists(_configBlkPath))
         {
-            return;
+            return true;
         }
 
         try
         {
             string configText = File.ReadAllText(_configBlkPath);
             string driverValue = GetGraphicsApiForMode(mode) == GraphicsApi.DX11 ? "dx11" : "dx12";
+            string enableVrValue = mode == AppliedMode.VR ? "yes" : "no";
 
             // War Thunder stores the renderer as driver:t="dx11" / driver:t="dx12".
             Match driverMatch = Regex.Match(
@@ -4627,7 +4633,42 @@ render{
                 }
             }
 
+            Match enableVrMatch = Regex.Match(
+                configText,
+                @"enableVR\s*:\s*b\s*=\s*(?:yes|no)",
+                RegexOptions.IgnoreCase);
+
+            if (enableVrMatch.Success)
+            {
+                configText = configText.Remove(enableVrMatch.Index, enableVrMatch.Length)
+                    .Insert(enableVrMatch.Index, $"enableVR:b={enableVrValue}");
+            }
+            else
+            {
+                Match gameplayMatch = Regex.Match(configText, @"gameplay\s*\{", RegexOptions.IgnoreCase);
+                if (gameplayMatch.Success)
+                {
+                    int insertAt = gameplayMatch.Index + gameplayMatch.Length;
+                    configText = configText.Insert(insertAt, Environment.NewLine + $"  enableVR:b={enableVrValue}");
+                }
+                else
+                {
+                    configText += Environment.NewLine +
+                                  "gameplay{" + Environment.NewLine +
+                                  $"  enableVR:b={enableVrValue}" + Environment.NewLine +
+                                  "}" + Environment.NewLine;
+                }
+            }
+
             File.WriteAllText(_configBlkPath, configText);
+
+            string verifiedText = File.ReadAllText(_configBlkPath);
+            if (!string.Equals(verifiedText, configText, StringComparison.Ordinal))
+            {
+                throw new IOException("The graphics profile could not be verified after writing config.blk.");
+            }
+
+            return true;
         }
         catch (Exception ex)
         {
@@ -4637,6 +4678,7 @@ render{
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Warning
             );
+            return false;
         }
     }
 
@@ -4655,10 +4697,33 @@ render{
                 ApplyGraphicsApiToConfig(_lastAppliedMode);
             }
 
+            string gameFolder = Path.GetDirectoryName(_warThunderExePath) ?? AppContext.BaseDirectory;
+            string launchArguments = "-skip_pkg_validation -forcestart";
+            bool isSteamInstallation = gameFolder.Contains(
+                Path.DirectorySeparatorChar + "steamapps" + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase);
+            string miniLauncherPath = Path.Combine(gameFolder, "beac_wt_mlauncher.exe");
+            string executableToLaunch = File.Exists(miniLauncherPath) ? miniLauncherPath : _warThunderExePath;
+
+            if (!isSteamInstallation && File.Exists(miniLauncherPath))
+            {
+                launchArguments += " -nosteam";
+            }
+
+            if (_lastAppliedMode == AppliedMode.VR)
+            {
+                launchArguments += " -config:gameplay/enableVR:b=yes";
+            }
+            else if (_lastAppliedMode == AppliedMode.Monitor)
+            {
+                launchArguments += " -config:gameplay/enableVR:b=no";
+            }
+
             Process.Start(new ProcessStartInfo
             {
-                FileName = _warThunderExePath,
-                WorkingDirectory = Path.GetDirectoryName(_warThunderExePath) ?? AppContext.BaseDirectory,
+                FileName = executableToLaunch,
+                Arguments = launchArguments,
+                WorkingDirectory = gameFolder,
                 UseShellExecute = true
             });
         }
@@ -4784,26 +4849,36 @@ render{
             return;
         }
 
-        if (_switchControlsWithProfile && !ApplyControlsProfile(_vrControlsBlkPath, "VR"))
+        if (!ValidateProfilePaths(_customVrEnabled ? _customVrBlkPath : null, _vrControlsBlkPath, "VR"))
         {
             return;
         }
 
+        string originalConfig = File.ReadAllText(_configBlkPath);
+        string? originalMachine = _switchControlsWithProfile ? File.ReadAllText(_machineBlkPath) : null;
+
+        bool graphicsApplied;
         if (_customVrEnabled)
         {
-            ApplyBlkFile(_customVrBlkPath, AppliedMode.VR);
-            return;
+            graphicsApplied = ApplyBlkFile(_customVrBlkPath, AppliedMode.VR);
         }
-
-        string presetContent = GetSelectedVrPresetContent();
-
-        if (string.IsNullOrWhiteSpace(presetContent))
+        else
         {
-            ShowWarning("Please go to Settings first and choose a VR preset.");
-            return;
+            string presetContent = GetSelectedVrPresetContent();
+            if (string.IsNullOrWhiteSpace(presetContent))
+            {
+                ShowWarning("Please go to Settings first and choose a VR preset.");
+                return;
+            }
+
+            graphicsApplied = ApplyBlkContent(presetContent, AppliedMode.VR);
         }
 
-        ApplyBlkContent(presetContent, AppliedMode.VR);
+        if (!graphicsApplied ||
+            (_switchControlsWithProfile && !ApplyControlsProfile(_vrControlsBlkPath, "VR")))
+        {
+            RestoreProfileTargets(originalConfig, originalMachine);
+        }
     }
 
     private void ApplyMonitorMode()
@@ -4816,12 +4891,90 @@ render{
             return;
         }
 
-        if (_switchControlsWithProfile && !ApplyControlsProfile(_desktopControlsBlkPath, "Desktop"))
+        if (!ValidateProfilePaths(_desktopBlkPath, _desktopControlsBlkPath, "Desktop"))
         {
             return;
         }
 
-        ApplyBlkFile(_desktopBlkPath, AppliedMode.Monitor);
+        string originalConfig = File.ReadAllText(_configBlkPath);
+        string? originalMachine = _switchControlsWithProfile ? File.ReadAllText(_machineBlkPath) : null;
+
+        if (!ApplyBlkFile(_desktopBlkPath, AppliedMode.Monitor) ||
+            (_switchControlsWithProfile && !ApplyControlsProfile(_desktopControlsBlkPath, "Desktop")))
+        {
+            RestoreProfileTargets(originalConfig, originalMachine);
+        }
+    }
+
+    private bool ValidateProfilePaths(string? graphicsSourcePath, string controlsSourcePath, string profileName)
+    {
+        if (_switchControlsWithProfile)
+        {
+            if (!Path.GetFileName(_machineBlkPath).Equals("machine.blk", StringComparison.OrdinalIgnoreCase))
+            {
+                ShowWarning("The Controls Profiles machine path must point to machine.blk, not config.blk or another .blk file.");
+                return false;
+            }
+
+            if (PathsEqual(_configBlkPath, _machineBlkPath))
+            {
+                ShowWarning("config.blk and machine.blk cannot be the same file. Select the real machine.blk in Controls Profiles.");
+                return false;
+            }
+
+            if (PathsEqual(controlsSourcePath, _machineBlkPath) || PathsEqual(controlsSourcePath, _configBlkPath))
+            {
+                ShowWarning($"The {profileName} controls preset must be an exported controls file. It cannot be config.blk or the live machine.blk.");
+                return false;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(graphicsSourcePath) &&
+            (PathsEqual(graphicsSourcePath, _configBlkPath) ||
+             (_switchControlsWithProfile && PathsEqual(graphicsSourcePath, _machineBlkPath))))
+        {
+            ShowWarning($"The {profileName} graphics profile must be a separate saved .blk file. It cannot be the live config.blk or machine.blk.");
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool PathsEqual(string? first, string? second)
+    {
+        if (string.IsNullOrWhiteSpace(first) || string.IsNullOrWhiteSpace(second))
+        {
+            return false;
+        }
+
+        try
+        {
+            return Path.GetFullPath(first).Equals(Path.GetFullPath(second), StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return first.Equals(second, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    private void RestoreProfileTargets(string originalConfig, string? originalMachine)
+    {
+        try
+        {
+            File.WriteAllText(_configBlkPath, originalConfig);
+            if (_switchControlsWithProfile && originalMachine != null)
+            {
+                File.WriteAllText(_machineBlkPath, originalMachine);
+            }
+
+            _lastAppliedMode = AppliedMode.None;
+            SaveState();
+            UpdateVisualStates();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Could not restore profile files", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private string? GetVrWarning()
@@ -4906,20 +5059,20 @@ render{
         return null;
     }
 
-    private void ApplyBlkFile(string sourcePath, AppliedMode mode)
+    private bool ApplyBlkFile(string sourcePath, AppliedMode mode)
     {
         try
         {
             if (!File.Exists(sourcePath))
             {
                 ShowWarning($"Source .blk file was not found:\n\n{sourcePath}");
-                return;
+                return false;
             }
 
             if (string.IsNullOrWhiteSpace(_configBlkPath))
             {
                 ShowWarning("Please go to Settings first and select your War Thunder config.blk file.");
-                return;
+                return false;
             }
 
             string? configFolder = Path.GetDirectoryName(_configBlkPath);
@@ -4927,11 +5080,14 @@ render{
             if (string.IsNullOrWhiteSpace(configFolder) || !Directory.Exists(configFolder))
             {
                 ShowWarning("The War Thunder config.blk folder does not exist.");
-                return;
+                return false;
             }
 
             File.Copy(sourcePath, _configBlkPath, true);
-            ApplyGraphicsApiToConfig(mode);
+            if (!ApplyGraphicsApiToConfig(mode))
+            {
+                return false;
+            }
 
             _lastAppliedMode = mode;
 
@@ -4939,6 +5095,7 @@ render{
             UpdateVisualStates();
 
             // Success popups are intentionally disabled so switching presets is instant and quiet.
+            return true;
         }
         catch (Exception ex)
         {
@@ -4948,17 +5105,18 @@ render{
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error
             );
+            return false;
         }
     }
 
-    private void ApplyBlkContent(string blkContent, AppliedMode mode)
+    private bool ApplyBlkContent(string blkContent, AppliedMode mode)
     {
         try
         {
             if (string.IsNullOrWhiteSpace(_configBlkPath))
             {
                 ShowWarning("Please go to Settings first and select your War Thunder config.blk file.");
-                return;
+                return false;
             }
 
             string? configFolder = Path.GetDirectoryName(_configBlkPath);
@@ -4966,11 +5124,14 @@ render{
             if (string.IsNullOrWhiteSpace(configFolder) || !Directory.Exists(configFolder))
             {
                 ShowWarning("The War Thunder config.blk folder does not exist.");
-                return;
+                return false;
             }
 
             File.WriteAllText(_configBlkPath, blkContent);
-            ApplyGraphicsApiToConfig(mode);
+            if (!ApplyGraphicsApiToConfig(mode))
+            {
+                return false;
+            }
 
             _lastAppliedMode = mode;
 
@@ -4978,6 +5139,7 @@ render{
             UpdateVisualStates();
 
             // Success popups are intentionally disabled so switching presets is instant and quiet.
+            return true;
         }
         catch (Exception ex)
         {
@@ -4987,6 +5149,7 @@ render{
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error
             );
+            return false;
         }
     }
 
@@ -5164,10 +5327,10 @@ render{
             _settingsCanvas.SetItemVisible("GameExePathText", false);
             _settingsCanvas.SetImage("GameExeBrowse", IsWarThunderExeSelected() ? _browseGreen : _browseRed);
 
-            bool canCaptureDesktopSettings = IsConfigSelected() && !IsDesktopConfigured();
+            bool canCaptureDesktopSettings = IsConfigSelected();
             bool canRemoveDesktopSettings = !string.IsNullOrWhiteSpace(_desktopBlkPath);
             bool customVrFileLoaded = !string.IsNullOrWhiteSpace(_customVrBlkPath) && File.Exists(_customVrBlkPath);
-            bool canCaptureCustomVrSettings = IsConfigSelected() && !customVrFileLoaded;
+            bool canCaptureCustomVrSettings = IsConfigSelected();
             bool canRemoveCustomVrSettings = !string.IsNullOrWhiteSpace(_customVrBlkPath);
 
             _settingsCanvas.SetImage("ConfigBrowse", IsConfigSelected() ? _browseGreen : _browseRed);
@@ -7159,6 +7322,21 @@ catch {
         try
         {
             string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            string[] savesRoots =
+            {
+                Path.Combine(documents, "My Games", "WarThunder", "Saves"),
+                Path.Combine(documents, "WarThunder", "Saves")
+            };
+
+            foreach (string savesRoot in savesRoots)
+            {
+                string? activeAccountMachine = TryGetActiveAccountMachineBlk(savesRoot);
+                if (activeAccountMachine != null)
+                {
+                    return activeAccountMachine;
+                }
+            }
+
             string[] candidates =
             {
                 Path.Combine(documents, "My Games", "WarThunder", "Saves", "last", "production", "machine.blk"),
@@ -7170,16 +7348,88 @@ catch {
                 if (File.Exists(candidate)) return candidate;
             }
 
-            string savesRoot = Path.Combine(documents, "My Games", "WarThunder", "Saves");
-            if (Directory.Exists(savesRoot))
+            string fallbackSavesRoot = Path.Combine(documents, "My Games", "WarThunder", "Saves");
+            if (Directory.Exists(fallbackSavesRoot))
             {
-                return Directory.EnumerateFiles(savesRoot, "machine.blk", SearchOption.AllDirectories)
+                return Directory.EnumerateFiles(fallbackSavesRoot, "machine.blk", SearchOption.AllDirectories)
                     .FirstOrDefault(path => path.Contains(Path.DirectorySeparatorChar + "production" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
             }
         }
         catch { }
 
         return null;
+    }
+
+    private static string? TryGetActiveAccountMachineBlk(string savesRoot)
+    {
+        try
+        {
+            string lastLoginPath = Path.Combine(savesRoot, "lastlogin.blk");
+            if (!File.Exists(lastLoginPath))
+            {
+                return null;
+            }
+
+            string lastLoginText = File.ReadAllText(lastLoginPath);
+            Match uidMatch = Regex.Match(lastLoginText, @"uid\s*:\s*i64\s*=\s*(\d+)", RegexOptions.IgnoreCase);
+            if (!uidMatch.Success)
+            {
+                return null;
+            }
+
+            string activeMachinePath = Path.Combine(savesRoot, uidMatch.Groups[1].Value, "production", "machine.blk");
+            return File.Exists(activeMachinePath) ? activeMachinePath : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string ResolveSavedMachineBlkPath(string savedPath)
+    {
+        if (string.IsNullOrWhiteSpace(savedPath) ||
+            !savedPath.Contains(Path.DirectorySeparatorChar + "last" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        {
+            return savedPath;
+        }
+
+        string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        string[] savesRoots =
+        {
+            Path.Combine(documents, "My Games", "WarThunder", "Saves"),
+            Path.Combine(documents, "WarThunder", "Saves")
+        };
+
+        foreach (string savesRoot in savesRoots)
+        {
+            string? activeMachinePath = TryGetActiveAccountMachineBlk(savesRoot);
+            if (activeMachinePath != null)
+            {
+                return activeMachinePath;
+            }
+        }
+
+        return savedPath;
+    }
+
+    private static string ResolveSavedWarThunderLauncherPath(string savedPath)
+    {
+        if (string.IsNullOrWhiteSpace(savedPath)) return savedPath;
+        if (Path.GetFileName(savedPath).Equals("launcher.exe", StringComparison.OrdinalIgnoreCase)) return savedPath;
+
+        if (Path.GetFileName(savedPath).Equals("aces.exe", StringComparison.OrdinalIgnoreCase))
+        {
+            string? binaryFolder = Path.GetDirectoryName(savedPath);
+            string? gameFolder = binaryFolder == null ? null : Directory.GetParent(binaryFolder)?.FullName;
+            if (gameFolder != null)
+            {
+                string launcherPath = Path.Combine(gameFolder, "launcher.exe");
+                if (File.Exists(launcherPath)) return launcherPath;
+            }
+        }
+
+        return savedPath;
     }
 
     private bool ApplyControlsProfile(string presetPath, string profileName)
@@ -7198,7 +7448,6 @@ catch {
                 return false;
             }
 
-            string machineText = File.ReadAllText(_machineBlkPath);
             string presetText = File.ReadAllText(presetPath);
 
             if (!TryExtractNamedBlkBlock(presetText, "controls", out string controlsBlock))
@@ -7207,22 +7456,58 @@ catch {
                 return false;
             }
 
-            if (!TryFindNamedBlkBlock(machineText, "controls", out int machineStart, out int machineLength))
-            {
-                MessageBox.Show(this, "The selected machine.blk does not contain a controls{...} block.", "Controls profile error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return false;
-            }
-
             string backupFolder = Path.Combine(AppFolder, "ControlSettings");
             Directory.CreateDirectory(backupFolder);
-            string backupPath = Path.Combine(backupFolder, "machine_backup.blk");
-            if (!File.Exists(backupPath))
+
+            // War Thunder can use both the active account machine.blk and its "last"
+            // mirror. Keep every live mirror in sync so a mode click takes effect
+            // immediately and the game cannot restore the previously loaded controls.
+            List<string> machineTargets = GetLiveMachineBlkTargets();
+            foreach (string machinePath in machineTargets)
             {
-                File.Copy(_machineBlkPath, backupPath, false);
+                string machineText = File.ReadAllText(machinePath);
+                if (!TryFindNamedBlkBlock(machineText, "controls", out int machineStart, out int machineLength))
+                {
+                    throw new InvalidDataException($"The selected machine.blk does not contain a controls{{...}} block:\n\n{machinePath}");
+                }
+
+                string safeBackupName = machinePath
+                    .Replace(':', '_')
+                    .Replace('\\', '_')
+                    .Replace('/', '_');
+                string backupPath = Path.Combine(backupFolder, safeBackupName + ".backup");
+                if (!File.Exists(backupPath))
+                {
+                    File.Copy(machinePath, backupPath, false);
+                }
+
+                string merged = machineText.Substring(0, machineStart) + controlsBlock + machineText.Substring(machineStart + machineLength);
+                File.WriteAllText(machinePath, merged);
+
+                string appliedMachineText = File.ReadAllText(machinePath);
+                if (!TryExtractNamedBlkBlock(appliedMachineText, "controls", out string appliedControlsBlock) ||
+                    !string.Equals(appliedControlsBlock, controlsBlock, StringComparison.Ordinal))
+                {
+                    throw new IOException($"The {profileName} controls profile could not be verified after writing:\n\n{machinePath}");
+                }
             }
 
-            string merged = machineText.Substring(0, machineStart) + controlsBlock + machineText.Substring(machineStart + machineLength);
-            File.WriteAllText(_machineBlkPath, merged);
+            if (IsWarThunderRunning())
+            {
+                _pendingControlsPresetPath = presetPath;
+                _pendingControlsProfileName = profileName;
+                _controlsReapplyTimer.Start();
+                MessageBox.Show(
+                    this,
+                    $"{profileName} graphics were applied immediately.\n\n" +
+                    "War Thunder keeps controls in memory while it is running and does not provide a live controls reload command. " +
+                    "The selected controls have been saved and will be applied again automatically when the game closes, so they cannot be overwritten. " +
+                    "Restart War Thunder to use the new controls.",
+                    "Controls require a game restart",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+
             return true;
         }
         catch (Exception ex)
@@ -7230,6 +7515,49 @@ catch {
             MessageBox.Show(this, ex.Message, "Could not apply controls profile", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return false;
         }
+    }
+
+    private static bool IsWarThunderRunning()
+    {
+        return Process.GetProcessesByName("aces").Length > 0 ||
+               Process.GetProcessesByName("aces_BE").Length > 0;
+    }
+
+    private void ReapplyPendingControlsAfterGameExit()
+    {
+        if (IsWarThunderRunning() || string.IsNullOrWhiteSpace(_pendingControlsPresetPath)) return;
+
+        _controlsReapplyTimer.Stop();
+        string presetPath = _pendingControlsPresetPath;
+        string profileName = _pendingControlsProfileName;
+        _pendingControlsPresetPath = "";
+        _pendingControlsProfileName = "";
+        ApplyControlsProfile(presetPath, profileName);
+    }
+
+    private List<string> GetLiveMachineBlkTargets()
+    {
+        List<string> targets = new List<string>();
+
+        void AddIfPresent(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return;
+            string fullPath = Path.GetFullPath(path);
+            if (!targets.Any(existing => PathsEqual(existing, fullPath)))
+            {
+                targets.Add(fullPath);
+            }
+        }
+
+        AddIfPresent(_machineBlkPath);
+        AddIfPresent(ResolveSavedMachineBlkPath(_machineBlkPath));
+        AddIfPresent(TryAutoDetectMachineBlk());
+
+        string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        AddIfPresent(Path.Combine(documents, "My Games", "WarThunder", "Saves", "last", "production", "machine.blk"));
+        AddIfPresent(Path.Combine(documents, "WarThunder", "Saves", "last", "production", "machine.blk"));
+
+        return targets;
     }
 
     private static bool TryExtractNamedBlkBlock(string text, string blockName, out string block)
@@ -7320,10 +7648,10 @@ catch {
             _configBlkPath = state.ConfigBlkPath ?? "";
             _desktopBlkPath = state.DesktopBlkPath ?? "";
             _customVrBlkPath = state.CustomVrBlkPath ?? "";
-            _machineBlkPath = state.MachineBlkPath ?? "";
+            _machineBlkPath = ResolveSavedMachineBlkPath(state.MachineBlkPath ?? "");
             _desktopControlsBlkPath = state.DesktopControlsBlkPath ?? "";
             _vrControlsBlkPath = state.VrControlsBlkPath ?? "";
-            _warThunderExePath = state.WarThunderExePath ?? "";
+            _warThunderExePath = ResolveSavedWarThunderLauncherPath(state.WarThunderExePath ?? "");
             _desktopGraphicsApi = state.DesktopGraphicsApi;
             _vrGraphicsApi = state.VrGraphicsApi;
             _switchControlsWithProfile = state.SwitchControlsWithProfile;
