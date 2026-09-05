@@ -134,7 +134,7 @@ public class MainForm : Form
     // Change these to true later if you want to re-enable F12 layout editing and external layout files.
     private const bool LayoutEditorEnabled = false;
     private const bool LoadExternalLayoutFiles = false;
-    private const string CurrentVersion = "1.1";
+    private const string CurrentVersion = "1.2";
     private const string GitHubLatestReleaseApi = "https://api.github.com/repos/theartofvalio-cmyk/WTVRSettingsAssistant/releases/latest";
     private const string GitHubReleasesUrl = "https://github.com/theartofvalio-cmyk/WTVRSettingsAssistant/releases";
 
@@ -3430,13 +3430,12 @@ render{
 
         _settingsPanel.Controls.Add(_settingsCanvas);
 
-        _settingsCanvas.AddText("SettingsTip", "Tip: You can drag and drop .blk files onto the BROWSE buttons.", new Rectangle(425, 3, 772, 50), 23.753845f, FontStyle.Italic);
+        _settingsCanvas.AddText("SettingsTip", "Select the War Thunder folder once; config and launcher files are detected automatically.", new Rectangle(360, 3, 900, 50), 22f, FontStyle.Italic);
 
         // Subtle section dividers keep the configuration rows visually distinct.
         Color sectionDividerColor = Color.FromArgb(62, 82, 88);
         _settingsCanvas.AddRectangle("ConfigSectionDivider", new Rectangle(75, 220, 1065, 2), sectionDividerColor);
-        _settingsCanvas.AddRectangle("LauncherSectionDivider", new Rectangle(75, 325, 1065, 2), sectionDividerColor);
-        _settingsCanvas.AddRectangle("DesktopSectionDivider", new Rectangle(75, 485, 1065, 2), sectionDividerColor);
+        _settingsCanvas.AddRectangle("DesktopSectionDivider", new Rectangle(75, 405, 1065, 2), sectionDividerColor);
 
         _settingsCanvas.AddImage("InfoIcon", _infoImage, new Rectangle(1408, 45, 81, 81), () => ShowScreen(_aboutPanel));
         _settingsCanvas.AddImage("HomeIcon", _homeImage, new Rectangle(1498, 28, 114, 106), () => ShowScreen(_mainPanel));
@@ -3496,27 +3495,27 @@ render{
             BrowseForWarThunderExe,
             path => SetWarThunderExePath(path));
 
-        _settingsCanvas.AddText("ConfigDescription", "Locate the config.blk in your War Thunder directory.", new Rectangle(75, 55, 680, 48), 24f, FontStyle.Italic, StringAlignment.Near, StringAlignment.Center);
-        _settingsCanvas.AddText("ConfigTitle", "WarThunder/Config.blk", new Rectangle(75, 102, 520, 48), 27f, FontStyle.Regular, StringAlignment.Near, StringAlignment.Center);
-        _settingsCanvas.AddRectangle("ConfigField", new Rectangle(75, 155, 500, 46), _fieldColor, () => BrowseForFile(FileSlot.Config));
+        _settingsCanvas.AddText("ConfigDescription", "Locate your War Thunder installation folder.", new Rectangle(75, 55, 680, 48), 24f, FontStyle.Italic, StringAlignment.Near, StringAlignment.Center);
+        _settingsCanvas.AddText("ConfigTitle", "WAR THUNDER FOLDER", new Rectangle(75, 102, 520, 48), 27f, FontStyle.Regular, StringAlignment.Near, StringAlignment.Center);
+        _settingsCanvas.AddRectangle("ConfigField", new Rectangle(75, 155, 500, 46), _fieldColor, BrowseForWarThunderFolder);
         _settingsCanvas.AddText("ConfigPathText", "", new Rectangle(85, 158, 475, 38), 16f, FontStyle.Regular, StringAlignment.Near, StringAlignment.Center);
-        _settingsCanvas.AddImage("ConfigBrowse", _browseRed, new Rectangle(390, 100, 280, 86), () => BrowseForFile(FileSlot.Config), path => SetFilePath(FileSlot.Config, path));
+        _settingsCanvas.AddImage("ConfigBrowse", _browseRed, new Rectangle(390, 100, 280, 86), BrowseForWarThunderFolder, path => SetFilePath(FileSlot.Config, path));
 
-        _settingsCanvas.AddText("DesktopDescription", "Your custom settings for War Thunder when playing on flat screen.", new Rectangle(75, 340, 760, 48), 24f, FontStyle.Italic, StringAlignment.Near, StringAlignment.Center);
-        _settingsCanvas.AddText("DesktopTitle", "DESCTOP .blk", new Rectangle(75, 395, 250, 48), 27f, FontStyle.Regular, StringAlignment.Near, StringAlignment.Center);
-        _settingsCanvas.AddRectangle("DesktopField", new Rectangle(75, 405, 500, 46), _fieldColor, () => BrowseForFile(FileSlot.Desktop));
-        _settingsCanvas.AddText("DesktopPathText", "", new Rectangle(85, 408, 475, 38), 16f, FontStyle.Regular, StringAlignment.Near, StringAlignment.Center);
-        _settingsCanvas.AddImage("DesktopBrowse", _browseRed, new Rectangle(260, 385, 280, 86), () => BrowseForFile(FileSlot.Desktop), path => SetFilePath(FileSlot.Desktop, path));
-        _settingsCanvas.AddImage("DesktopCaptureSettings", _captureSettingsImage, new Rectangle(690, 400, 250, 50), CaptureDesktopSettings);
-        _settingsCanvas.AddImage("DesktopRemoveSettings", _removeGrayImage, new Rectangle(950, 400, 190, 50), null);
+        _settingsCanvas.AddText("DesktopDescription", "Your custom settings for War Thunder when playing on flat screen.", new Rectangle(75, 255, 760, 48), 24f, FontStyle.Italic, StringAlignment.Near, StringAlignment.Center);
+        _settingsCanvas.AddText("DesktopTitle", "DESCTOP .blk", new Rectangle(75, 310, 250, 48), 27f, FontStyle.Regular, StringAlignment.Near, StringAlignment.Center);
+        _settingsCanvas.AddRectangle("DesktopField", new Rectangle(75, 320, 500, 46), _fieldColor, () => BrowseForFile(FileSlot.Desktop));
+        _settingsCanvas.AddText("DesktopPathText", "", new Rectangle(85, 323, 475, 38), 16f, FontStyle.Regular, StringAlignment.Near, StringAlignment.Center);
+        _settingsCanvas.AddImage("DesktopBrowse", _browseRed, new Rectangle(260, 300, 280, 86), () => BrowseForFile(FileSlot.Desktop), path => SetFilePath(FileSlot.Desktop, path));
+        _settingsCanvas.AddImage("DesktopCaptureSettings", _captureSettingsImage, new Rectangle(690, 315, 250, 50), CaptureDesktopSettings);
+        _settingsCanvas.AddImage("DesktopRemoveSettings", _removeGrayImage, new Rectangle(950, 315, 190, 50), null);
 
         _settingsCanvas.AddText("CustomToggleTitle", "CUSTOM VR .blk", new Rectangle(1215, 135, 330, 46), 31f, FontStyle.Regular);
         _settingsCanvas.AddImage("CustomToggle", _buttonOff, new Rectangle(1250, 185, 260, 140), ToggleCustomVr);
 
-        _settingsCanvas.AddText("PresetTitle", "VR PRESETS", new Rectangle(75, 505, 500, 50), 39.68158f, FontStyle.Regular, StringAlignment.Near, StringAlignment.Center);
-        _settingsCanvas.AddImage("LowButton", _lowRed, new Rectangle(45, 565, 430, 260), () => SelectVrPreset(VrPreset.Low));
-        _settingsCanvas.AddImage("MediumButton", _mediumRed, new Rectangle(500, 565, 430, 260), () => SelectVrPreset(VrPreset.Medium));
-        _settingsCanvas.AddImage("HighButton", _highRed, new Rectangle(955, 565, 430, 260), () => SelectVrPreset(VrPreset.High));
+        _settingsCanvas.AddText("PresetTitle", "VR PRESETS", new Rectangle(75, 425, 500, 50), 39.68158f, FontStyle.Regular, StringAlignment.Near, StringAlignment.Center);
+        _settingsCanvas.AddImage("LowButton", _lowRed, new Rectangle(45, 485, 430, 260), () => SelectVrPreset(VrPreset.Low));
+        _settingsCanvas.AddImage("MediumButton", _mediumRed, new Rectangle(500, 485, 430, 260), () => SelectVrPreset(VrPreset.Medium));
+        _settingsCanvas.AddImage("HighButton", _highRed, new Rectangle(955, 485, 430, 260), () => SelectVrPreset(VrPreset.High));
 
         if (_recommendedSettingsImage != null)
         {
@@ -3529,20 +3528,20 @@ render{
 
         if (_helpImage != null)
         {
-            _settingsCanvas.AddImage("HelpButton", _helpImage, new Rectangle(300, 510, 43, 43), ShowRecommendedGpuGraph);
+            _settingsCanvas.AddImage("HelpButton", _helpImage, new Rectangle(300, 430, 43, 43), ShowRecommendedGpuGraph);
         }
         else
         {
-            _settingsCanvas.AddText("HelpButton", "?", new Rectangle(300, 510, 43, 43), 24f, FontStyle.Bold, StringAlignment.Center, StringAlignment.Center, ShowRecommendedGpuGraph);
+            _settingsCanvas.AddText("HelpButton", "?", new Rectangle(300, 430, 43, 43), 24f, FontStyle.Bold, StringAlignment.Center, StringAlignment.Center, ShowRecommendedGpuGraph);
         }
 
-        _settingsCanvas.AddText("CustomVrDescription", "Your custom settings for War Thunder when playing in VR.", new Rectangle(75, 500, 760, 48), 24f, FontStyle.Italic, StringAlignment.Near, StringAlignment.Center);
-        _settingsCanvas.AddText("CustomVrTitle", "VR .blk", new Rectangle(75, 565, 220, 48), 30f, FontStyle.Regular, StringAlignment.Near, StringAlignment.Center);
-        _settingsCanvas.AddRectangle("CustomVrField", new Rectangle(75, 565, 500, 46), _fieldColor, () => BrowseForFile(FileSlot.CustomVr));
-        _settingsCanvas.AddText("CustomVrPathText", "", new Rectangle(85, 568, 475, 38), 16f, FontStyle.Regular, StringAlignment.Near, StringAlignment.Center);
-        _settingsCanvas.AddImage("CustomVrBrowse", _browseRed, new Rectangle(260, 555, 280, 86), () => BrowseForFile(FileSlot.CustomVr), path => SetFilePath(FileSlot.CustomVr, path));
-        _settingsCanvas.AddImage("CustomVrCaptureSettings", _captureSettingsImage, new Rectangle(690, 570, 250, 50), CaptureCustomVrSettings);
-        _settingsCanvas.AddImage("CustomVrRemoveSettings", _removeGrayImage, new Rectangle(950, 570, 190, 50), null);
+        _settingsCanvas.AddText("CustomVrDescription", "Your custom settings for War Thunder when playing in VR.", new Rectangle(75, 420, 760, 48), 24f, FontStyle.Italic, StringAlignment.Near, StringAlignment.Center);
+        _settingsCanvas.AddText("CustomVrTitle", "VR .blk", new Rectangle(75, 485, 220, 48), 30f, FontStyle.Regular, StringAlignment.Near, StringAlignment.Center);
+        _settingsCanvas.AddRectangle("CustomVrField", new Rectangle(75, 485, 500, 46), _fieldColor, () => BrowseForFile(FileSlot.CustomVr));
+        _settingsCanvas.AddText("CustomVrPathText", "", new Rectangle(85, 488, 475, 38), 16f, FontStyle.Regular, StringAlignment.Near, StringAlignment.Center);
+        _settingsCanvas.AddImage("CustomVrBrowse", _browseRed, new Rectangle(260, 475, 280, 86), () => BrowseForFile(FileSlot.CustomVr), path => SetFilePath(FileSlot.CustomVr, path));
+        _settingsCanvas.AddImage("CustomVrCaptureSettings", _captureSettingsImage, new Rectangle(690, 490, 250, 50), CaptureCustomVrSettings);
+        _settingsCanvas.AddImage("CustomVrRemoveSettings", _removeGrayImage, new Rectangle(950, 490, 190, 50), null);
 
         BuildGraphicsApiControls();
     }
@@ -3661,7 +3660,7 @@ render{
         // Compact renderer selectors only. No separate "API" text labels.
         // Desktop: between Browse and Capture Settings.
         Rectangle desktopLabelBounds = Rectangle.Empty;
-        Rectangle desktopComboBounds = ScaleRect(new Rectangle(555, 400, 118, 40));
+        Rectangle desktopComboBounds = ScaleRect(new Rectangle(555, 315, 118, 40));
 
         Rectangle vrLabelBounds = Rectangle.Empty;
         Rectangle vrComboBounds;
@@ -3669,12 +3668,12 @@ render{
         if (_customVrEnabled)
         {
             // Custom VR: between Browse and Capture Settings.
-            vrComboBounds = ScaleRect(new Rectangle(555, 570, 118, 40));
+            vrComboBounds = ScaleRect(new Rectangle(555, 490, 118, 40));
         }
         else
         {
             // Preset mode: keep the selector in the same DX column used by custom VR.
-            vrComboBounds = ScaleRect(new Rectangle(555, 515, 118, 40));
+            vrComboBounds = ScaleRect(new Rectangle(555, 435, 118, 40));
         }
 
         _desktopGraphicsApiLabel.Bounds = desktopLabelBounds;
@@ -4740,6 +4739,12 @@ render{
 
     private void BrowseForFile(FileSlot slot)
     {
+        if (slot == FileSlot.Config)
+        {
+            BrowseForWarThunderFolder();
+            return;
+        }
+
         using OpenFileDialog dialog = new OpenFileDialog();
 
         dialog.Title = "Select .blk file";
@@ -4753,6 +4758,12 @@ render{
 
     private void SetFilePath(FileSlot slot, string path)
     {
+        if (slot == FileSlot.Config && Directory.Exists(path))
+        {
+            SetWarThunderFolder(path);
+            return;
+        }
+
         if (!File.Exists(path))
         {
             ShowWarning("The selected file does not exist.");
@@ -4879,6 +4890,54 @@ render{
         {
             RestoreProfileTargets(originalConfig, originalMachine);
         }
+    }
+
+    private void BrowseForWarThunderFolder()
+    {
+        using FolderBrowserDialog dialog = new FolderBrowserDialog
+        {
+            Description = "Select the main War Thunder installation folder",
+            UseDescriptionForTitle = true,
+            ShowNewFolderButton = false
+        };
+
+        string? currentFolder = !string.IsNullOrWhiteSpace(_configBlkPath)
+            ? Path.GetDirectoryName(_configBlkPath)
+            : null;
+        if (!string.IsNullOrWhiteSpace(currentFolder) && Directory.Exists(currentFolder))
+        {
+            dialog.SelectedPath = currentFolder;
+        }
+
+        if (dialog.ShowDialog(this) == DialogResult.OK)
+        {
+            SetWarThunderFolder(dialog.SelectedPath);
+        }
+    }
+
+    private void SetWarThunderFolder(string selectedPath)
+    {
+        if (string.IsNullOrWhiteSpace(selectedPath)) return;
+
+        string folder = Path.GetFullPath(selectedPath.Trim().Trim('"'));
+        if (Path.GetFileName(folder).Equals("win64", StringComparison.OrdinalIgnoreCase) ||
+            Path.GetFileName(folder).Equals("win32", StringComparison.OrdinalIgnoreCase))
+        {
+            folder = Directory.GetParent(folder)?.FullName ?? folder;
+        }
+
+        string configPath = Path.Combine(folder, "config.blk");
+        string launcherPath = Path.Combine(folder, "launcher.exe");
+        if (!File.Exists(configPath) || !File.Exists(launcherPath))
+        {
+            ShowWarning("Select the main War Thunder folder containing both config.blk and launcher.exe.");
+            return;
+        }
+
+        _configBlkPath = configPath;
+        _warThunderExePath = launcherPath;
+        SaveState();
+        UpdateVisualStates();
     }
 
     private void ApplyMonitorMode()
@@ -5223,7 +5282,7 @@ render{
 
         if (_configBrowseButton != null)
         {
-            _configBrowseButton.Image = IsConfigSelected() ? _browseGreen : _browseRed;
+            _configBrowseButton.Image = IsConfigSelected() && IsWarThunderExeSelected() ? _browseGreen : _browseRed;
         }
 
         if (_desktopBrowseButton != null)
@@ -5325,7 +5384,8 @@ render{
             _settingsCanvas.SetItemVisible("DesktopPathText", false);
             _settingsCanvas.SetItemVisible("GameExeField", false);
             _settingsCanvas.SetItemVisible("GameExePathText", false);
-            _settingsCanvas.SetImage("GameExeBrowse", IsWarThunderExeSelected() ? _browseGreen : _browseRed);
+            _settingsCanvas.SetItemVisible("GameExeTitle", false);
+            _settingsCanvas.SetItemVisible("GameExeBrowse", false);
 
             bool canCaptureDesktopSettings = IsConfigSelected();
             bool canRemoveDesktopSettings = !string.IsNullOrWhiteSpace(_desktopBlkPath);
@@ -5333,7 +5393,7 @@ render{
             bool canCaptureCustomVrSettings = IsConfigSelected();
             bool canRemoveCustomVrSettings = !string.IsNullOrWhiteSpace(_customVrBlkPath);
 
-            _settingsCanvas.SetImage("ConfigBrowse", IsConfigSelected() ? _browseGreen : _browseRed);
+            _settingsCanvas.SetImage("ConfigBrowse", IsConfigSelected() && IsWarThunderExeSelected() ? _browseGreen : _browseRed);
             _settingsCanvas.SetImage("DesktopBrowse", IsDesktopConfigured() ? _browseGreen : _browseRed);
             _settingsCanvas.SetImage("CustomVrBrowse", customVrFileLoaded ? _browseGreen : _browseRed);
 
@@ -7456,6 +7516,17 @@ catch {
                 return false;
             }
 
+            if (!TryExtractNamedBlkBlock(presetText, "settings", out string controlsSettingsBlock))
+            {
+                MessageBox.Show(
+                    this,
+                    "The selected controls .blk does not contain its settings{...} block. Export the complete controls preset from War Thunder so sensitivity, nonlinearity, multipliers, and other sliders can be transferred.",
+                    "Incomplete controls profile",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+                return false;
+            }
+
             string backupFolder = Path.Combine(AppFolder, "ControlSettings");
             Directory.CreateDirectory(backupFolder);
 
@@ -7466,11 +7537,6 @@ catch {
             foreach (string machinePath in machineTargets)
             {
                 string machineText = File.ReadAllText(machinePath);
-                if (!TryFindNamedBlkBlock(machineText, "controls", out int machineStart, out int machineLength))
-                {
-                    throw new InvalidDataException($"The selected machine.blk does not contain a controls{{...}} block:\n\n{machinePath}");
-                }
-
                 string safeBackupName = machinePath
                     .Replace(':', '_')
                     .Replace('\\', '_')
@@ -7481,14 +7547,24 @@ catch {
                     File.Copy(machinePath, backupPath, false);
                 }
 
-                string merged = machineText.Substring(0, machineStart) + controlsBlock + machineText.Substring(machineStart + machineLength);
+                if (!TryExtractNamedBlkBlock(machineText, "settings", out string liveSettingsBlock))
+                {
+                    throw new InvalidDataException($"The selected machine.blk does not contain a settings{{...}} block:\n\n{machinePath}");
+                }
+
+                string mergedControlSettings = MergeControlSettingsBlock(liveSettingsBlock, controlsSettingsBlock);
+                string merged = ReplaceRequiredBlkBlock(machineText, "controls", controlsBlock, machinePath);
+                merged = ReplaceRequiredBlkBlock(merged, "settings", mergedControlSettings, machinePath);
                 File.WriteAllText(machinePath, merged);
 
+                // Read the file back to catch a real truncated/invalid write. Do not
+                // reject a successful write because War Thunder normalizes whitespace,
+                // numeric formatting, or duplicated scalar entries in machine.blk.
                 string appliedMachineText = File.ReadAllText(machinePath);
-                if (!TryExtractNamedBlkBlock(appliedMachineText, "controls", out string appliedControlsBlock) ||
-                    !string.Equals(appliedControlsBlock, controlsBlock, StringComparison.Ordinal))
+                if (!TryExtractNamedBlkBlock(appliedMachineText, "controls", out _) ||
+                    !TryExtractNamedBlkBlock(appliedMachineText, "settings", out _))
                 {
-                    throw new IOException($"The {profileName} controls profile could not be verified after writing:\n\n{machinePath}");
+                    throw new IOException($"The {profileName} controls profile write produced an invalid machine.blk:\n\n{machinePath}");
                 }
             }
 
@@ -7515,6 +7591,104 @@ catch {
             MessageBox.Show(this, ex.Message, "Could not apply controls profile", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return false;
         }
+    }
+
+    private static string ReplaceRequiredBlkBlock(string targetText, string blockName, string replacementBlock, string targetPath)
+    {
+        if (!TryFindNamedBlkBlock(targetText, blockName, out int start, out int length))
+        {
+            throw new InvalidDataException($"The selected machine.blk does not contain a {blockName}{{...}} block:\n\n{targetPath}");
+        }
+
+        return targetText.Substring(0, start) + replacementBlock + targetText.Substring(start + length);
+    }
+
+    private static bool BlkBlocksEqual(string first, string second)
+    {
+        static string Normalize(string value) => value
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n')
+            .Trim();
+
+        return string.Equals(Normalize(first), Normalize(second), StringComparison.Ordinal);
+    }
+
+    private static string MergeControlSettingsBlock(string liveBlock, string presetBlock)
+    {
+        Dictionary<string, string> presetValues = ExtractControlSettingValues(presetBlock);
+        string merged = liveBlock;
+
+        foreach ((string key, string typedValue) in presetValues)
+        {
+            string pattern = $@"(?m)^(?<indent>[ \t]*){Regex.Escape(key)}\s*:[A-Za-z0-9_]+\s*=.*$";
+            MatchCollection existing = Regex.Matches(merged, pattern);
+            if (existing.Count > 0)
+            {
+                // A few War Thunder builds can retain duplicate scalar entries. Update
+                // every occurrence so the last value read by the game cannot remain stale.
+                merged = Regex.Replace(
+                    merged,
+                    pattern,
+                    match => match.Groups["indent"].Value + key + ":" + typedValue);
+            }
+            else
+            {
+                int closeBrace = merged.LastIndexOf('}');
+                if (closeBrace < 0) throw new InvalidDataException("The live settings block is malformed.");
+                string newline = merged.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+                merged = merged.Insert(closeBrace, "  " + key + ":" + typedValue + newline);
+            }
+        }
+
+        return merged;
+    }
+
+    private static bool ControlSettingsMatch(string appliedBlock, string presetBlock)
+    {
+        Dictionary<string, string> expected = ExtractControlSettingValues(presetBlock);
+        Dictionary<string, string> actual = ExtractControlSettingValues(appliedBlock);
+        return expected.Count > 0 && expected.All(pair =>
+            actual.TryGetValue(pair.Key, out string? value) &&
+            string.Equals(value, pair.Value, StringComparison.Ordinal));
+    }
+
+    private static Dictionary<string, string> ExtractControlSettingValues(string settingsBlock)
+    {
+        Dictionary<string, string> values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (Match match in Regex.Matches(
+                     settingsBlock,
+                     @"(?m)^[ \t]*(?<key>[A-Za-z_][A-Za-z0-9_]*)\s*:(?<type>[A-Za-z0-9_]+)\s*=\s*(?<value>[^\r\n]*)$"))
+        {
+            string key = match.Groups["key"].Value;
+            if (IsControlSettingName(key))
+            {
+                values[key] = match.Groups["type"].Value + "=" + match.Groups["value"].Value.Trim();
+            }
+        }
+
+        return values;
+    }
+
+    private static bool IsControlSettingName(string key)
+    {
+        return key.EndsWith("Multiplier", StringComparison.OrdinalIgnoreCase) ||
+               key.Contains("Sens", StringComparison.OrdinalIgnoreCase) ||
+               key.Contains("Nonlinearity", StringComparison.OrdinalIgnoreCase) ||
+               key.Contains("DeadZone", StringComparison.OrdinalIgnoreCase) ||
+               key.StartsWith("aimAccelerationDelay", StringComparison.OrdinalIgnoreCase) ||
+               key.StartsWith("mouseZMult", StringComparison.OrdinalIgnoreCase) ||
+               key.StartsWith("mouseJoystick", StringComparison.OrdinalIgnoreCase) ||
+               key.StartsWith("helicopterMouseJoystick", StringComparison.OrdinalIgnoreCase) ||
+               key.StartsWith("mouseAileron", StringComparison.OrdinalIgnoreCase) ||
+               key.StartsWith("helicopterMouseAileron", StringComparison.OrdinalIgnoreCase) ||
+               key.StartsWith("invert", StringComparison.OrdinalIgnoreCase) ||
+               key is "freeCameraInertia" or "replayCameraWiggle" or "mouseSmooth" or
+                   "mouseJoyMode" or "helicopterMouseJoyMode" or "cameraSmooth" or
+                   "cameraSpeed" or "cameraMouseSpeed" or "cameraFpsPhysMult" or
+                   "vrCameraFpsPhysMult" or "cameraInvertY" or "isXChgSticks" or
+                   "secondaryInvert" or "secondaryXChgSticks" or "zoomForTurret" or
+                   "isVibration" or "forceGain" or "cameraShakeMultiplier" or
+                   "vrCameraShakeMultiplier" or "holdBtnToGrabHotas" or "gamepadMinVibration";
     }
 
     private static bool IsWarThunderRunning()
