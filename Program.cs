@@ -134,7 +134,7 @@ public class MainForm : Form
     // Change these to true later if you want to re-enable F12 layout editing and external layout files.
     private const bool LayoutEditorEnabled = false;
     private const bool LoadExternalLayoutFiles = false;
-    private const string CurrentVersion = "1.2";
+    private const string CurrentVersion = "1.3";
     private const string GitHubLatestReleaseApi = "https://api.github.com/repos/theartofvalio-cmyk/WTVRSettingsAssistant/releases/latest";
     private const string GitHubReleasesUrl = "https://github.com/theartofvalio-cmyk/WTVRSettingsAssistant/releases";
 
@@ -182,7 +182,7 @@ public class MainForm : Form
   },
   "InfoIcon": {
     "X": 1516,
-    "Y": 168,
+    "Y": 270,
     "Width": 81,
     "Height": 81,
     "ZOrder": 4,
@@ -2842,6 +2842,7 @@ render{
     private string _pendingControlsProfileName = "";
     private bool _updatePromptShown;
     private string _latestReleaseUrl = GitHubReleasesUrl;
+    private NeckAssistForm? _neckAssistForm;
 
     private ComboBox? _desktopGraphicsApiCombo;
     private ComboBox? _vrGraphicsApiCombo;
@@ -2991,8 +2992,14 @@ render{
         KeyDown += MainForm_KeyDown;
         MouseWheel += MainForm_MouseWheel;
         Resize += MainForm_Resize;
+        Move += (_, _) => PositionNeckAssistPanel();
+        ClientSizeChanged += (_, _) => PositionNeckAssistPanel();
         ResizeEnd += (_, _) => SaveState();
-        FormClosing += (_, _) => SaveState();
+        FormClosing += (_, _) =>
+        {
+            _neckAssistForm?.Close();
+            SaveState();
+        };
 
         _controlsReapplyTimer.Interval = 1000;
         _controlsReapplyTimer.Tick += (_, _) => ReapplyPendingControlsAfterGameExit();
@@ -3404,7 +3411,9 @@ render{
         }
         _mainCanvas.SetItemToolTip("YoutubeButton", "Subscribe to my War Thunder VR channel on YouTube");
 
-        _mainCanvas.AddImage("UpdateButton", _updateGreen, new Rectangle(1516, 291, 81, 81), CheckForUpdatesFromButton);
+        _mainCanvas.AddImage("UpdateButton", _updateGreen, new Rectangle(1516, 372, 81, 81), CheckForUpdatesFromButton);
+        _mainCanvas.AddImage("NeckAssistButton", SafeLoadImage("NeckAssist.png"), new Rectangle(1516, 168, 81, 81), ToggleNeckAssistPanel);
+        _mainCanvas.SetItemToolTip("NeckAssistButton", "Open neck rotation assistance controls");
 
         _mainCanvas.AddImage("InfoIcon", _infoImage, new Rectangle(1516, 168, 81, 81), () =>
         {
@@ -3416,6 +3425,37 @@ render{
         });
 
         _mainCanvas.ApplyLayout(ParseBakedLayout(BakedMainLayoutJson));
+    }
+
+    private void ToggleNeckAssistPanel()
+    {
+        if (_neckAssistForm is { IsDisposed: false, Visible: true })
+        {
+            _neckAssistForm.Hide();
+            return;
+        }
+
+        if (_neckAssistForm == null || _neckAssistForm.IsDisposed)
+        {
+            _neckAssistForm = new NeckAssistForm(AppFolder);
+            _neckAssistForm.ConfigureNavigation(_homeImage, _infoImage, () => { _neckAssistForm.Hide(); ShowScreen(_aboutPanel); });
+            _neckAssistForm.FormClosed += (_, _) => _neckAssistForm = null;
+            _neckAssistForm.CloseRequested += (_, _) => { _neckAssistForm.Hide(); ShowScreen(_mainPanel); };
+            _neckAssistForm.TopLevel = false;
+            _neckAssistForm.FormBorderStyle = FormBorderStyle.None;
+            _neckAssistForm.Dock = DockStyle.Fill;
+            Controls.Add(_neckAssistForm);
+        }
+
+        PositionNeckAssistPanel();
+        _neckAssistForm.Show();
+        _neckAssistForm.BringToFront();
+    }
+
+    private void PositionNeckAssistPanel()
+    {
+        if (_neckAssistForm is not { IsDisposed: false }) return;
+        _neckAssistForm.Bounds = ClientRectangle;
     }
 
     private void BuildSettingsScreen()
@@ -4026,7 +4066,7 @@ render{
 
         _aboutCanvas.AddText(
             "AboutPurpose",
-            "A Windows utility for switching War Thunder between Desktop and VR configurations without manually replacing files every time. It can manage graphics profiles, DX11/DX12 renderer choices, optional control presets, and launch the game after the selected setup is applied.",
+            "A Windows utility for switching War Thunder between Desktop and VR profiles and providing configurable neck-rotation assistance for OpenXR headsets. It manages graphics, renderer and control profiles, launches the selected setup, and can extend comfortable head movement for rear visibility in VR.",
             new Rectangle(40, 115, 1480, 120),
             27f,
             FontStyle.Regular,
@@ -4047,11 +4087,11 @@ render{
 
         _aboutCanvas.AddText(
             "HowToText",
-            "1. Select War Thunder's config.blk and launcher.exe.\n\n" +
-            "2. Load or capture a Desktop profile and choose DX11 or DX12.\n\n" +
-            "3. Select a built-in VR preset or enable CUSTOM VR .blk.\n\n" +
-            "4. Optionally configure separate Desktop and VR control presets.\n\n" +
-            "5. Press MONITOR or VR to apply the profile, then press PLAY.",
+            "1. Select the War Thunder installation folder; the app finds config.blk and the launcher.\n\n" +
+            "2. Capture Desktop/VR graphics and optional control profiles, then press MONITOR or VR to apply them.\n\n" +
+            "3. Open Neck Assist, enable it before starting VR, and launch the game once so OpenXR loads the layer.\n\n" +
+            "4. Drag yellow/orange/cyan/green graph markers or use the matching sliders. Changes apply live after connection.\n\n" +
+            "5. Bind optional HOTAS buttons for recenter and Neck Assist; use the same recenter binding in War Thunder.",
             new Rectangle(40, 340, 700, 365),
             25f,
             FontStyle.Regular,
@@ -4069,12 +4109,12 @@ render{
 
         _aboutCanvas.AddText(
             "PatchNotesText",
-            "• War Thunder launching through launcher.exe in forced-start mode\n\n" +
-            "• Independent DX11/DX12 selection for Desktop and VR\n\n" +
-            "• Optional Desktop and VR control-profile switching\n\n" +
-            "• Safe machine.blk controls-section backup and replacement\n\n" +
-            "• Clearer Settings layout, help text, and profile controls\n\n" +
-            "• Automatic GitHub update checking",
+            "• New embedded Neck Rotation Assistance page\n\n" +
+            "• OpenXR headset tracking with live graph feedback\n\n" +
+            "• Separate horizontal and vertical assistance controls\n\n" +
+            "• Draggable activation, release, natural-resume and maximum-view markers\n\n" +
+            "• Rear-view boost with natural 1:1 movement after the boost\n\n" +
+            "• HOTAS single-button/combo bindings, motion stabilization and clearer connection status",
             new Rectangle(830, 340, 690, 350),
             24f,
             FontStyle.Regular,

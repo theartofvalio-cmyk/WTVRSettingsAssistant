@@ -30,6 +30,15 @@ Watch the full setup and usage guide here:
   * Medium
   * High
 
+### Neck Rotation Assistance (v1.3)
+
+* Embedded OpenXR neck-assistance controls with live headset/view graphs
+* Separate left/right and up/down settings, with optional linked editing
+* Draggable activation, release, natural-resume, and maximum-view markers
+* Rear-view boost that restores natural 1:1 movement after the configured boost zone
+* HOTAS single-button or multi-button bindings for recenter and assistance toggle
+* Motion stabilization and clear backend/telemetry connection status
+
 ### Settings Capture
 
 * Capture your current War Thunder graphics settings directly from `config.blk`
@@ -76,11 +85,13 @@ Have fun. ;)
 
 ## How To Use
 
-1. Locate your War Thunder `config.blk`
+1. Select your War Thunder installation folder
 2. Configure your Desktop and/or VR profile
 3. Choose a preset or custom `.blk`
 4. Apply the desired settings
 5. Launch War Thunder
+
+For Neck Assist, enable it before starting the VR session so the OpenXR layer can load. Once connected, graph and slider changes apply live without restarting the game. Yellow starts the boost, orange releases it when returning to center, cyan restores natural 1:1 movement, and green controls the maximum resulting view.
 
 ---
 
