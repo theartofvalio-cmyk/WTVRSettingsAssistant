@@ -30,14 +30,21 @@ Watch the full setup and usage guide here:
   * Medium
   * High
 
-### Neck Rotation Assistance (v1.3)
+### Neck Rotation Assistance (v1.4)
 
 * Embedded OpenXR neck-assistance controls with live headset/view graphs
+* OpenXR runtime support including SteamVR OpenXR and VDXR
 * Separate left/right and up/down settings, with optional linked editing
 * Draggable activation, release, natural-resume, and maximum-view markers
 * Rear-view boost that restores natural 1:1 movement after the configured boost zone
 * HOTAS single-button or multi-button bindings for recenter and assistance toggle
 * Motion stabilization and clear backend/telemetry connection status
+* Advanced curve-based mode with Toggle or Hold activation
+* Simple Hold mode with fixed rear rotation and a direction deadzone
+* Keyboard, mouse, and HOTAS single-button or combination bindings
+* Adjustable camera transition speed
+* Persistent active state with a dedicated green status icon
+* Restore recommended Advanced defaults without clearing bindings
 
 ### Settings Capture
 

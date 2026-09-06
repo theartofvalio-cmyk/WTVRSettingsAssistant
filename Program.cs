@@ -17,6 +17,7 @@ using System.Text.Json;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows.Forms;
+using Microsoft.Win32;
 
 [assembly: SupportedOSPlatform("windows")]
 
@@ -24,11 +25,42 @@ namespace WTVRSettingsAssistant;
 
 internal static class Program
 {
+    private const string InstanceMutexName = "Local\\WTVRSettingsAssistant.SingleInstance";
+    private const string ActivateEventName = "Local\\WTVRSettingsAssistant.Activate";
+
     [STAThread]
     static void Main()
     {
+        using Mutex instanceMutex = new(initiallyOwned: true, InstanceMutexName, out bool isFirstInstance);
+        using EventWaitHandle activateEvent = new(false, EventResetMode.AutoReset, ActivateEventName);
+        if (!isFirstInstance)
+        {
+            try { activateEvent.Set(); } catch { }
+            return;
+        }
+
         ApplicationConfiguration.Initialize();
-        Application.Run(new MainForm());
+        MainForm mainForm = new();
+        RegisteredWaitHandle activationRegistration = ThreadPool.RegisterWaitForSingleObject(
+            activateEvent,
+            (_, _) =>
+            {
+                if (!mainForm.IsDisposed && mainForm.IsHandleCreated)
+                {
+                    try { mainForm.BeginInvoke((Action)mainForm.RestoreFromExternalLaunch); } catch { }
+                }
+            },
+            null,
+            Timeout.Infinite,
+            executeOnlyOnce: false);
+        try
+        {
+            Application.Run(mainForm);
+        }
+        finally
+        {
+            activationRegistration.Unregister(null);
+        }
     }
 }
 
@@ -134,8 +166,9 @@ public class MainForm : Form
     // Change these to true later if you want to re-enable F12 layout editing and external layout files.
     private const bool LayoutEditorEnabled = false;
     private const bool LoadExternalLayoutFiles = false;
-    private const string CurrentVersion = "1.3";
+    private const string CurrentVersion = "1.4";
     private const string GitHubLatestReleaseApi = "https://api.github.com/repos/theartofvalio-cmyk/WTVRSettingsAssistant/releases/latest";
+    private const string GitHubReleasesApi = "https://api.github.com/repos/theartofvalio-cmyk/WTVRSettingsAssistant/releases?per_page=30";
     private const string GitHubReleasesUrl = "https://github.com/theartofvalio-cmyk/WTVRSettingsAssistant/releases";
 
     private const string BakedMainLayoutJson = """"
@@ -1287,6 +1320,10 @@ render{
         public bool ShowHighWarning { get; set; } = true;
         public VrPreset SelectedVrPreset { get; set; } = VrPreset.None;
         public AppliedMode LastAppliedMode { get; set; } = AppliedMode.None;
+        public bool UseBetaBuilds { get; set; }
+        public bool MinimizeToTray { get; set; }
+        public bool StartWithWindows { get; set; }
+        public bool StartMinimizedToTray { get; set; }
         public int WindowWidth { get; set; }
         public int WindowHeight { get; set; }
     }
@@ -2843,6 +2880,8 @@ render{
     private bool _updatePromptShown;
     private string _latestReleaseUrl = GitHubReleasesUrl;
     private NeckAssistForm? _neckAssistForm;
+    private Image? _neckAssistImage;
+    private Image? _neckAssistActiveImage;
 
     private ComboBox? _desktopGraphicsApiCombo;
     private ComboBox? _vrGraphicsApiCombo;
@@ -2880,6 +2919,12 @@ render{
 
     private bool _customVrEnabled;
     private bool _showHighWarning = true;
+    private bool _useBetaBuilds;
+    private bool _minimizeToTray;
+    private bool _startWithWindows;
+    private bool _startMinimizedToTray;
+    private bool _allowExit;
+    private NotifyIcon? _trayIcon;
 
     private VrPreset _selectedVrPreset = VrPreset.None;
     private AppliedMode _lastAppliedMode = AppliedMode.None;
@@ -2995,8 +3040,14 @@ render{
         Move += (_, _) => PositionNeckAssistPanel();
         ClientSizeChanged += (_, _) => PositionNeckAssistPanel();
         ResizeEnd += (_, _) => SaveState();
-        FormClosing += (_, _) =>
+        FormClosing += (_, e) =>
         {
+            if (!_allowExit && e.CloseReason == CloseReason.UserClosing && _minimizeToTray)
+            {
+                e.Cancel = true;
+                HideToTray();
+                return;
+            }
             _neckAssistForm?.Close();
             SaveState();
         };
@@ -3006,6 +3057,7 @@ render{
 
         LoadAssets();
         LoadState();
+        ConfigureTrayIcon();
         _lastNormalClientSize = ClientSize;
 
         BuildMainScreen();
@@ -3013,7 +3065,11 @@ render{
         BuildAboutScreen();
         BuildRecommendedScreen();
 
-        Shown += async (_, _) => await CheckForUpdatesAsync(false);
+        Shown += async (_, _) =>
+        {
+            if (_startMinimizedToTray) HideToTray();
+            await CheckForUpdatesAsync(false);
+        };
 
         if (LoadExternalLayoutFiles)
         {
@@ -3412,8 +3468,10 @@ render{
         _mainCanvas.SetItemToolTip("YoutubeButton", "Subscribe to my War Thunder VR channel on YouTube");
 
         _mainCanvas.AddImage("UpdateButton", _updateGreen, new Rectangle(1516, 372, 81, 81), CheckForUpdatesFromButton);
-        _mainCanvas.AddImage("NeckAssistButton", SafeLoadImage("NeckAssist.png"), new Rectangle(1516, 168, 81, 81), ToggleNeckAssistPanel);
-        _mainCanvas.SetItemToolTip("NeckAssistButton", "Open neck rotation assistance controls");
+        _neckAssistImage ??= SafeLoadImage("NeckAssist.png");
+        _neckAssistActiveImage ??= SafeLoadImage("NeckAssist_Active.png");
+        _mainCanvas.AddImage("NeckAssistButton", IsNeckAssistSavedEnabled() ? _neckAssistActiveImage : _neckAssistImage, new Rectangle(1516, 168, 81, 81), ToggleNeckAssistPanel);
+        _mainCanvas.SetItemToolTip("NeckAssistButton", IsNeckAssistSavedEnabled() ? "Neck Assist is ACTIVE — open controls" : "Neck Assist is OFF — open controls");
 
         _mainCanvas.AddImage("InfoIcon", _infoImage, new Rectangle(1516, 168, 81, 81), () =>
         {
@@ -3438,6 +3496,7 @@ render{
         if (_neckAssistForm == null || _neckAssistForm.IsDisposed)
         {
             _neckAssistForm = new NeckAssistForm(AppFolder);
+            _neckAssistForm.AssistanceStateChanged += (_, _) => RefreshNeckAssistIcon();
             _neckAssistForm.ConfigureNavigation(_homeImage, _infoImage, () => { _neckAssistForm.Hide(); ShowScreen(_aboutPanel); });
             _neckAssistForm.FormClosed += (_, _) => _neckAssistForm = null;
             _neckAssistForm.CloseRequested += (_, _) => { _neckAssistForm.Hide(); ShowScreen(_mainPanel); };
@@ -3450,6 +3509,26 @@ render{
         PositionNeckAssistPanel();
         _neckAssistForm.Show();
         _neckAssistForm.BringToFront();
+    }
+
+    private bool IsNeckAssistSavedEnabled()
+    {
+        try
+        {
+            string path = Path.Combine(SettingsFolder, "neck_assist.json");
+            if (!File.Exists(path)) return false;
+            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
+            return document.RootElement.TryGetProperty("Enabled", out JsonElement enabled) && enabled.GetBoolean();
+        }
+        catch { return false; }
+    }
+
+    private void RefreshNeckAssistIcon()
+    {
+        if (_mainCanvas == null || _neckAssistImage == null || _neckAssistActiveImage == null) return;
+        bool active = _neckAssistForm?.AssistanceEnabled ?? IsNeckAssistSavedEnabled();
+        _mainCanvas.SetImage("NeckAssistButton", active ? _neckAssistActiveImage : _neckAssistImage);
+        _mainCanvas.SetItemToolTip("NeckAssistButton", active ? "Neck Assist is ACTIVE — open controls" : "Neck Assist is OFF — open controls");
     }
 
     private void PositionNeckAssistPanel()
@@ -3479,6 +3558,21 @@ render{
 
         _settingsCanvas.AddImage("InfoIcon", _infoImage, new Rectangle(1408, 45, 81, 81), () => ShowScreen(_aboutPanel));
         _settingsCanvas.AddImage("HomeIcon", _homeImage, new Rectangle(1498, 28, 114, 106), () => ShowScreen(_mainPanel));
+
+        _settingsCanvas.AddRectangle(
+            "AppOptionsButtonBg",
+            new Rectangle(880, 230, 280, 55),
+            Color.FromArgb(18, 30, 34),
+            ShowApplicationOptionsDialog);
+        _settingsCanvas.AddText(
+            "AppOptionsButton",
+            "APP OPTIONS",
+            new Rectangle(880, 230, 280, 55),
+            20f,
+            FontStyle.Bold,
+            StringAlignment.Center,
+            StringAlignment.Center,
+            ShowApplicationOptionsDialog);
 
         // Controls and launcher tools are grouped at the top-center.
         _settingsCanvas.AddRectangle(
@@ -3584,6 +3678,172 @@ render{
         _settingsCanvas.AddImage("CustomVrRemoveSettings", _removeGrayImage, new Rectangle(950, 490, 190, 50), null);
 
         BuildGraphicsApiControls();
+    }
+
+    private void ShowApplicationOptionsDialog()
+    {
+        using Form dialog = new()
+        {
+            Text = "App Options",
+            StartPosition = FormStartPosition.CenterParent,
+            ClientSize = new Size(1120, 740),
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            BackColor = _backgroundColor,
+            ForeColor = _textColor
+        };
+
+        Label heading = new()
+        {
+            Text = "UPDATE AND STARTUP OPTIONS",
+            Font = UiFont(30, FontStyle.Bold),
+            ForeColor = Color.FromArgb(95, 225, 245),
+            AutoSize = false,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Bounds = new Rectangle(48, 30, 1000, 58)
+        };
+        CheckBox beta = new()
+        {
+            Text = "Receive beta builds",
+            Checked = _useBetaBuilds,
+            Font = UiFont(21, FontStyle.Bold),
+            ForeColor = _textColor,
+            AutoSize = true,
+            Location = new Point(52, 118)
+        };
+        Label betaHelp = new()
+        {
+            Text = "When enabled, automatic updates check both normal releases and beta/pre-release builds.\nWhen disabled, beta builds are ignored completely.",
+            Font = UiFont(16.5f, FontStyle.Regular),
+            ForeColor = Color.FromArgb(190, 210, 214),
+            AutoSize = false,
+            Bounds = new Rectangle(92, 162, 930, 72)
+        };
+        CheckBox minimize = new()
+        {
+            Text = "Close button minimizes the app to the system tray",
+            Checked = _minimizeToTray,
+            Font = UiFont(21, FontStyle.Bold),
+            ForeColor = _textColor,
+            AutoSize = true,
+            Location = new Point(52, 276)
+        };
+        CheckBox startup = new()
+        {
+            Text = "Start with Windows, minimized to the system tray",
+            Checked = _startWithWindows,
+            Font = UiFont(21, FontStyle.Bold),
+            ForeColor = _textColor,
+            AutoSize = true,
+            Location = new Point(52, 350)
+        };
+        Label trayHelp = new()
+        {
+            Text = "Double-click the tray icon to restore the window.\nUse Exit from its menu to close the app completely.",
+            Font = UiFont(16.5f, FontStyle.Regular),
+            ForeColor = Color.FromArgb(190, 210, 214),
+            AutoSize = false,
+            Bounds = new Rectangle(92, 398, 900, 72)
+        };
+        Button save = new()
+        {
+            Text = "SAVE OPTIONS",
+            Font = UiFont(18, FontStyle.Bold),
+            ForeColor = Color.White,
+            BackColor = Color.FromArgb(25, 95, 55),
+            FlatStyle = FlatStyle.Flat,
+            DialogResult = DialogResult.OK,
+            Bounds = new Rectangle(580, 632, 270, 66)
+        };
+        Button cancel = new()
+        {
+            Text = "CANCEL",
+            Font = UiFont(18, FontStyle.Bold),
+            ForeColor = Color.White,
+            BackColor = Color.FromArgb(35, 55, 60),
+            FlatStyle = FlatStyle.Flat,
+            DialogResult = DialogResult.Cancel,
+            Bounds = new Rectangle(870, 632, 200, 66)
+        };
+        dialog.AcceptButton = save;
+        dialog.CancelButton = cancel;
+        dialog.Controls.AddRange(new Control[] { heading, beta, betaHelp, minimize, startup, trayHelp, save, cancel });
+
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+        _useBetaBuilds = beta.Checked;
+        _minimizeToTray = minimize.Checked;
+        _startWithWindows = startup.Checked;
+        _startMinimizedToTray = startup.Checked;
+        if (!SetWindowsStartup(_startWithWindows))
+        {
+            MessageBox.Show(this, "Windows startup registration could not be changed. Your other app options were saved.", "App Options", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        SaveState();
+    }
+
+    private void ConfigureTrayIcon()
+    {
+        ContextMenuStrip menu = new();
+        menu.Items.Add("Restore", null, (_, _) => RestoreFromTray());
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Exit", null, (_, _) =>
+        {
+            _allowExit = true;
+            _trayIcon?.Dispose();
+            _trayIcon = null;
+            Close();
+        });
+
+        _trayIcon = new NotifyIcon
+        {
+            Text = "WT VR Settings Assistant",
+            Icon = Icon ?? SystemIcons.Application,
+            ContextMenuStrip = menu,
+            Visible = true
+        };
+        _trayIcon.DoubleClick += (_, _) => RestoreFromTray();
+    }
+
+    private void HideToTray()
+    {
+        _neckAssistForm?.Hide();
+        ShowInTaskbar = false;
+        WindowState = FormWindowState.Minimized;
+        Hide();
+        _trayIcon?.ShowBalloonTip(1500, "WT VR Settings Assistant", "The app is still running in the system tray.", ToolTipIcon.Info);
+    }
+
+    private void RestoreFromTray()
+    {
+        ShowInTaskbar = true;
+        Show();
+        WindowState = FormWindowState.Normal;
+        Activate();
+        BringToFront();
+    }
+
+    internal void RestoreFromExternalLaunch() => RestoreFromTray();
+
+    private static bool SetWindowsStartup(bool enabled)
+    {
+        try
+        {
+            using RegistryKey? runKey = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
+            if (runKey == null) return false;
+            const string valueName = "WTVRSettingsAssistant";
+            if (enabled)
+            {
+                runKey.SetValue(valueName, "\"" + Application.ExecutablePath + "\"");
+            }
+            else
+            {
+                runKey.DeleteValue(valueName, throwOnMissingValue: false);
+            }
+            return true;
+        }
+        catch { return false; }
     }
 
     private void BuildGraphicsApiControls()
@@ -4066,7 +4326,7 @@ render{
 
         _aboutCanvas.AddText(
             "AboutPurpose",
-            "A Windows utility for switching War Thunder between Desktop and VR profiles and providing configurable neck-rotation assistance for OpenXR headsets. It manages graphics, renderer and control profiles, launches the selected setup, and can extend comfortable head movement for rear visibility in VR.",
+            "A Windows utility for switching War Thunder between Desktop and VR profiles and providing configurable neck-rotation assistance. It supports OpenXR runtimes including SteamVR OpenXR and VDXR, manages graphics, renderer and control profiles, launches the selected setup, and can extend comfortable head movement for rear visibility in VR.",
             new Rectangle(40, 115, 1480, 120),
             27f,
             FontStyle.Regular,
@@ -4089,9 +4349,9 @@ render{
             "HowToText",
             "1. Select the War Thunder installation folder; the app finds config.blk and the launcher.\n\n" +
             "2. Capture Desktop/VR graphics and optional control profiles, then press MONITOR or VR to apply them.\n\n" +
-            "3. Open Neck Assist, enable it before starting VR, and launch the game once so OpenXR loads the layer.\n\n" +
-            "4. Drag yellow/orange/cyan/green graph markers or use the matching sliders. Changes apply live after connection.\n\n" +
-            "5. Bind optional HOTAS buttons for recenter and Neck Assist; use the same recenter binding in War Thunder.",
+            "3. Open Neck Assist and switch it ON before starting VR. It works with OpenXR runtimes including SteamVR OpenXR and VDXR; the green icon confirms it remains active.\n\n" +
+            "4. ADVANCED uses adjustable rear-view curves and can work as Toggle or Hold. SIMPLE adds a fixed rear rotation while its assigned input is held.\n\n" +
+            "5. Bind keyboard, mouse or HOTAS inputs. Simple uses War Thunder's in-game recenter and its deadzone chooses the viewing direction.",
             new Rectangle(40, 340, 700, 365),
             25f,
             FontStyle.Regular,
@@ -4109,12 +4369,13 @@ render{
 
         _aboutCanvas.AddText(
             "PatchNotesText",
-            "• New embedded Neck Rotation Assistance page\n\n" +
-            "• OpenXR headset tracking with live graph feedback\n\n" +
-            "• Separate horizontal and vertical assistance controls\n\n" +
-            "• Draggable activation, release, natural-resume and maximum-view markers\n\n" +
-            "• Rear-view boost with natural 1:1 movement after the boost\n\n" +
-            "• HOTAS single-button/combo bindings, motion stabilization and clearer connection status",
+            "• Advanced and Simple Neck Assist movement modes\n\n" +
+            "• OpenXR support including SteamVR OpenXR and VDXR\n\n" +
+            "• Simple Hold rear view with rotation and direction-deadzone controls\n\n" +
+            "• Keyboard, mouse and HOTAS single/combo input bindings\n\n" +
+            "• Adjustable camera transition speed and Advanced Toggle/Hold behavior\n\n" +
+            "• Persistent ON/OFF state with dedicated green active icon\n\n" +
+            "• Restore Advanced defaults without clearing bindings, plus clearer layouts and help text",
             new Rectangle(830, 340, 690, 350),
             24f,
             FontStyle.Regular,
@@ -6214,16 +6475,30 @@ render{
             };
             client.DefaultRequestHeaders.UserAgent.ParseAdd("WT-VR-Settings-Assistant");
 
-            string json = await client.GetStringAsync(GitHubLatestReleaseApi);
+            string json = await client.GetStringAsync(_useBetaBuilds ? GitHubReleasesApi : GitHubLatestReleaseApi);
             using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement release = document.RootElement;
+            if (_useBetaBuilds && document.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                release = document.RootElement
+                    .EnumerateArray()
+                    .Where(candidate => !candidate.TryGetProperty("draft", out JsonElement draft) || !draft.GetBoolean())
+                    .OrderByDescending(candidate => ParseReleaseVersion(candidate.TryGetProperty("tag_name", out JsonElement tagElement) ? tagElement.GetString() ?? "" : ""))
+                    .FirstOrDefault();
+                if (release.ValueKind == JsonValueKind.Undefined)
+                {
+                    throw new InvalidOperationException("GitHub did not return a beta or stable release.");
+                }
+            }
 
-            string tag = document.RootElement.GetProperty("tag_name").GetString() ?? "";
-            string releaseUrl = document.RootElement.TryGetProperty("html_url", out JsonElement urlElement)
+            string tag = release.GetProperty("tag_name").GetString() ?? "";
+            bool isBetaRelease = tag.Contains('-', StringComparison.Ordinal);
+            string releaseUrl = release.TryGetProperty("html_url", out JsonElement urlElement)
                 ? urlElement.GetString() ?? GitHubReleasesUrl
                 : GitHubReleasesUrl;
 
             string? updatePackageUrl = null;
-            if (document.RootElement.TryGetProperty("assets", out JsonElement assetsElement) &&
+            if (release.TryGetProperty("assets", out JsonElement assetsElement) &&
                 assetsElement.ValueKind == JsonValueKind.Array)
             {
                 updatePackageUrl = assetsElement
@@ -6240,12 +6515,14 @@ render{
             }
 
             if (!Version.TryParse(CurrentVersion, out Version? current) ||
-                !Version.TryParse(tag.Trim().TrimStart('v', 'V'), out Version? latest))
+                ParseReleaseVersion(tag) is not Version latest)
             {
                 throw new InvalidOperationException("GitHub returned an unrecognized version number.");
             }
 
-            bool updateAvailable = latest > current;
+            // The stable-only endpoint never returns pre-releases. On the beta channel,
+            // accept a beta with the same numeric version too, so opt-in testers receive it.
+            bool updateAvailable = latest > current || (_useBetaBuilds && isBetaRelease && latest == current);
             _latestReleaseUrl = releaseUrl;
 
             if (_mainCanvas != null)
@@ -6258,7 +6535,7 @@ render{
                 _updatePromptShown = true;
                 DialogResult answer = MessageBox.Show(
                     this,
-                    $"War Thunder VR Settings Assistant {latest} is available.\n\n" +
+                    $"War Thunder VR Settings Assistant {tag} is available{(isBetaRelease ? " (beta)" : "")}.\n\n" +
                     $"You are currently using version {current}.\n\n" +
                     "Would you like to download and install it now?\n\n" +
                     "Your saved settings and captured graphics profiles will be kept.",
@@ -6288,7 +6565,9 @@ render{
             {
                 MessageBox.Show(
                     this,
-                    $"Version {CurrentVersion} is up to date.",
+                    _useBetaBuilds
+                        ? $"Version {CurrentVersion} is up to date on the stable and beta channels."
+                        : $"Version {CurrentVersion} is up to date on the stable channel. Beta builds are ignored.",
                     "No updates available",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information);
@@ -6306,6 +6585,14 @@ render{
                     MessageBoxIcon.Warning);
             }
         }
+    }
+
+    private static Version? ParseReleaseVersion(string tag)
+    {
+        string normalized = tag.Trim().TrimStart('v', 'V');
+        int prereleaseSeparator = normalized.IndexOf('-');
+        if (prereleaseSeparator >= 0) normalized = normalized[..prereleaseSeparator];
+        return Version.TryParse(normalized, out Version? version) ? version : null;
     }
 
     private async Task DownloadAndInstallUpdateAsync(string packageUrl, Version latestVersion)
@@ -7873,6 +8160,10 @@ catch {
             _showHighWarning = state.ShowHighWarning;
             _selectedVrPreset = state.SelectedVrPreset;
             _lastAppliedMode = state.LastAppliedMode;
+            _useBetaBuilds = state.UseBetaBuilds;
+            _minimizeToTray = state.MinimizeToTray;
+            _startWithWindows = state.StartWithWindows;
+            _startMinimizedToTray = state.StartMinimizedToTray;
 
             if (state.WindowWidth >= S(900) && state.WindowHeight >= S(470))
             {
@@ -7908,6 +8199,10 @@ catch {
                 ShowHighWarning = _showHighWarning,
                 SelectedVrPreset = _selectedVrPreset,
                 LastAppliedMode = _lastAppliedMode,
+                UseBetaBuilds = _useBetaBuilds,
+                MinimizeToTray = _minimizeToTray,
+                StartWithWindows = _startWithWindows,
+                StartMinimizedToTray = _startMinimizedToTray,
                 WindowWidth = ClientSize.Width,
                 WindowHeight = ClientSize.Height
             };

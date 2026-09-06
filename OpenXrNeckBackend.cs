@@ -16,24 +16,35 @@ internal sealed class OpenXrNeckBackend : IDisposable
     private float _filteredPitch;
     private bool _yawEngaged;
     private bool _pitchEngaged;
+    private float _pressDirection = 1;
+    private bool _simpleDirectionLatched;
     private float _lastObservedYaw;
     private float _lastObservedPitch;
     public bool HasLiveTelemetry { get; private set; }
     public string RegistrationError { get; private set; } = "";
 
-    public void UpdateMotion(NeckAssistSettings settings)
+    public void UpdateMotion(NeckAssistSettings settings, bool runtimeActive)
     {
         long now = System.Diagnostics.Stopwatch.GetTimestamp();
         float dt = _lastTick == 0 ? 0.016f : Math.Clamp((float)(now - _lastTick) / System.Diagnostics.Stopwatch.Frequency, 0.001f, 0.1f);
         _lastTick = now;
         float yaw = _accessor.ReadSingle(0);
         float pitch = _accessor.ReadSingle(4);
-        UpdateEngagement(ref _yawEngaged, yaw, settings.StartAngle, settings.ReturnAngle, settings.Enabled);
-        UpdateEngagement(ref _pitchEngaged, pitch, settings.PitchStartAngle, settings.PitchReturnAngle, settings.Enabled && settings.PitchEnabled);
-        float targetYaw = _yawEngaged ? settings.YawBezier.Evaluate(yaw, settings.StartAngle, settings.MaximumViewAngle, 110, settings.YawCurvature, settings.NaturalRearView, settings.YawNaturalResumeAngle) - yaw : 0;
-        float targetPitch = _pitchEngaged ? settings.PitchBezier.Evaluate(pitch, settings.PitchStartAngle, settings.PitchMaximumViewAngle, 80, settings.PitchCurvature, settings.NaturalRearView, settings.PitchNaturalResumeAngle) - pitch : 0;
-        _filteredYaw = Stabilize(_filteredYaw, targetYaw, dt);
-        _filteredPitch = Stabilize(_filteredPitch, targetPitch, dt);
+        bool pressMode = settings.MovementMode == "Simple";
+        if (pressMode && !runtimeActive) _simpleDirectionLatched = false;
+        if (pressMode && runtimeActive && !_simpleDirectionLatched && Math.Abs(yaw) >= settings.SimpleDeadzoneAngle)
+        {
+            _pressDirection = Math.Sign(yaw == 0 ? 1 : yaw);
+            _simpleDirectionLatched = true;
+        }
+        UpdateEngagement(ref _yawEngaged, yaw, settings.StartAngle, settings.ReturnAngle, settings.Enabled && runtimeActive && !pressMode);
+        UpdateEngagement(ref _pitchEngaged, pitch, settings.PitchStartAngle, settings.PitchReturnAngle, settings.Enabled && runtimeActive && !pressMode && settings.PitchEnabled);
+        float targetYaw = pressMode ? (runtimeActive && _simpleDirectionLatched ? _pressDirection * settings.PressRotationAngle : 0) :
+            (_yawEngaged ? settings.YawBezier.Evaluate(yaw, settings.StartAngle, settings.MaximumViewAngle, 110, settings.YawCurvature, settings.NaturalRearView, settings.YawNaturalResumeAngle) - yaw : 0);
+        float targetPitch = !pressMode && _pitchEngaged ? settings.PitchBezier.Evaluate(pitch, settings.PitchStartAngle, settings.PitchMaximumViewAngle, 80, settings.PitchCurvature, settings.NaturalRearView, settings.PitchNaturalResumeAngle) - pitch : 0;
+        float transitionTau = 0.52f - settings.TransitionSpeed / 100f * 0.46f;
+        _filteredYaw = Stabilize(_filteredYaw, targetYaw, dt, transitionTau);
+        _filteredPitch = Stabilize(_filteredPitch, targetPitch, dt, transitionTau);
         if (!settings.Enabled) _filteredYaw = _filteredPitch = 0;
         // The native layer supports externally supplied offsets when its built-in
         // linear mapping is disabled. Only write our fields, preserving telemetry.
@@ -49,11 +60,11 @@ internal sealed class OpenXrNeckBackend : IDisposable
         else if (engaged && absolute <= Math.Min(release, start - 2)) engaged = false;
     }
 
-    private static float Stabilize(float previous, float target, float dt)
+    private static float Stabilize(float previous, float target, float dt, float tau)
     {
         if (Math.Abs(target - previous) < 0.04f) return previous;
-        float smoothed = previous + (target - previous) * (1 - MathF.Exp(-dt / 0.045f));
-        float maxStep = 540f * dt;
+        float smoothed = previous + (target - previous) * (1 - MathF.Exp(-dt / tau));
+        float maxStep = 720f * dt;
         return previous + Math.Clamp(smoothed - previous, -maxStep, maxStep);
     }
 

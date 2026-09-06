@@ -7,9 +7,9 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationIcon>Icon.ico</ApplicationIcon>
-    <Version>1.3.0</Version>
-    <AssemblyVersion>1.3.0.0</AssemblyVersion>
-    <FileVersion>1.3.0.0</FileVersion>
+    <Version>1.4.0</Version>
+    <AssemblyVersion>1.4.0.0</AssemblyVersion>
+    <FileVersion>1.4.0.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -48,6 +48,7 @@
     <None Remove="Assets\MoreInfo.png" />
     <None Remove="Assets\Next.png" />
     <None Remove="Assets\NextGray.png" />
+    <None Remove="Assets\NeckAssist_Active.png" />
     <None Remove="Assets\NvidiaProfileInspector.png" />
     <None Remove="Assets\Play_Off.png" />
     <None Remove="Assets\Play_On.png" />
@@ -82,6 +83,7 @@
   <ItemGroup>
     <Compile Remove="verification\**\*.cs" />
     <EmbeddedResource Include="Assets\NeckAssist.png" />
+    <EmbeddedResource Include="Assets\NeckAssist_Active.png" />
     <Content Include="Icon.ico" />
     <Content Include="ThirdParty\XRNeckSafer\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

@@ -79,6 +79,7 @@ internal sealed class NeckAssistSettings
     public string Curve { get; set; } = "Linear";
     public string RecenterBinding { get; set; } = "Not assigned";
     public string ActivationBinding { get; set; } = "Not assigned";
+    public string SimpleActivationBinding { get; set; } = "Not assigned";
     public string ActivationMode { get; set; } = "Hold";
     public bool PitchEnabled { get; set; }
     public int PitchStartAngle { get; set; } = 15;
@@ -93,11 +94,18 @@ internal sealed class NeckAssistSettings
     public bool NaturalRearView { get; set; } = true;
     public int YawNaturalResumeAngle { get; set; } = 28;
     public int PitchNaturalResumeAngle { get; set; } = 20;
+    public string MovementMode { get; set; } = "Advanced";
+    public int PressRotationAngle { get; set; } = 160;
+    public int TransitionSpeed { get; set; } = 55;
+    public string AdvancedActivationBehavior { get; set; } = "Toggle";
+    public int SimpleDeadzoneAngle { get; set; } = 8;
 }
 
 internal sealed class NeckAssistForm : Form
 {
     public event EventHandler? CloseRequested;
+    public event EventHandler? AssistanceStateChanged;
+    public bool AssistanceEnabled => _settings.Enabled;
     private Panel? _navigation;
     public void ConfigureNavigation(Image home, Image info, Action showInfo)
     {
@@ -132,11 +140,13 @@ internal sealed class NeckAssistForm : Form
     private NeckCurvePreview? _pitchPreview;
     private readonly Button _recenterBind;
     private readonly Button _activationBind;
+    private readonly Button _simpleActivationBind;
     private readonly ComboBox _activationMode;
     private readonly System.Windows.Forms.Timer _statusTimer = new() { Interval = 1500 };
     private bool _lastActivationPressed;
     private bool _lastRecenterPressed;
     private bool _toggleActive;
+    private bool _runtimeAssistanceActive;
     private int _statusTicks;
     private bool _capturingBinding;
 
@@ -148,6 +158,13 @@ internal sealed class NeckAssistForm : Form
         _settings.PitchBezier ??= new();
         _settings.YawBezier.Validate();
         _settings.PitchBezier.Validate();
+        _settings.MovementMode = _settings.MovementMode is "Press" or "Simple" ? "Simple" : "Advanced";
+        _settings.PressRotationAngle = Math.Clamp(_settings.PressRotationAngle, 30, 180);
+        _settings.TransitionSpeed = Math.Clamp(_settings.TransitionSpeed, 1, 100);
+        _settings.AdvancedActivationBehavior = _settings.AdvancedActivationBehavior == "Hold" ? "Hold" : "Toggle";
+        _settings.SimpleDeadzoneAngle = Math.Clamp(_settings.SimpleDeadzoneAngle, 0, 45);
+        _toggleActive = _settings.Enabled;
+        _runtimeAssistanceActive = _settings.Enabled;
         _openXrBackend = new OpenXrNeckBackend(appFolder);
 
         Text = "Neck Rotation Assistance";
@@ -186,14 +203,27 @@ internal sealed class NeckAssistForm : Form
             Checked = _settings.Enabled,
             Location = new Point(20, 148)
         };
+        Label enabledIndicator = MakeLabel(_settings.Enabled ? "● ACTIVE" : "○ OFF", 11, FontStyle.Bold);
+        enabledIndicator.ForeColor = _settings.Enabled ? Color.FromArgb(70, 235, 125) : Color.FromArgb(145, 155, 158);
+        enabledIndicator.TextAlign = ContentAlignment.MiddleLeft;
+        enabledIndicator.SetBounds(330, 144, 150, 34);
+        void RefreshEnabledIndicator()
+        {
+            enabledIndicator.Text = _enabled.Checked ? "● ACTIVE" : "○ OFF";
+            enabledIndicator.ForeColor = _enabled.Checked ? Color.FromArgb(70, 235, 125) : Color.FromArgb(145, 155, 158);
+        }
         _enabled.CheckedChanged += (_, _) =>
         {
             _settings.Enabled = _enabled.Checked;
+            _toggleActive = _enabled.Checked;
+            _runtimeAssistanceActive = _enabled.Checked;
             SaveSettings();
             _openXrBackend.SetHeld(!_settings.Enabled, _settings.PitchEnabled);
+            RefreshEnabledIndicator();
             RefreshStatus();
+            AssistanceStateChanged?.Invoke(this, EventArgs.Empty);
         };
-        Controls.Add(_enabled);
+        Controls.AddRange(new Control[] { _enabled, enabledIndicator });
 
         _runtimeStatus = MakeLabel("Runtime: detecting…", 10, FontStyle.Bold);
         _runtimeStatus.SetBounds(20, 190, 410, 32);
@@ -304,7 +334,7 @@ internal sealed class NeckAssistForm : Form
         Controls.Add(recenterLabel);
         _recenterBind = MakeButton(FormatBinding(_settings.RecenterBinding));
         _recenterBind.SetBounds(265, bindingY + 7, 165, 34);
-        _recenterBind.Click += (_, _) => CaptureBinding(true);
+        _recenterBind.Click += (_, _) => CaptureBinding(0);
         Controls.Add(_recenterBind);
 
         Label recenterHint = MakeLabel("Set this exact same HOTAS combo as War Thunder's VR recenter command.", 8.5f, FontStyle.Italic);
@@ -315,6 +345,7 @@ internal sealed class NeckAssistForm : Form
         // Activation is controlled by the main ON/OFF switch. Keep these objects only
         // for settings-file compatibility with earlier test builds.
         _activationBind = MakeButton(FormatBinding(_settings.ActivationBinding));
+        _simpleActivationBind = MakeButton(FormatBinding(_settings.SimpleActivationBinding));
         _activationMode = new ComboBox
         {
             DropDownStyle = ComboBoxStyle.DropDownList,
@@ -456,7 +487,7 @@ internal sealed class NeckAssistForm : Form
         Label toggleLabel = MakeLabel("NECK ASSIST TOGGLE", 11, FontStyle.Bold);
         toggleLabel.SetBounds(20, 215, 220, 36);
         _activationBind.SetBounds(250, 215, 260, 38);
-        _activationBind.Click += (_, _) => CaptureBinding(false);
+        _activationBind.Click += (_, _) => CaptureBinding(1);
         Button clearToggle = MakeButton("CLEAR");
         clearToggle.SetBounds(522, 215, 100, 38);
         clearToggle.Click += (_, _) => { _settings.ActivationBinding = "Not assigned"; _activationBind.Text = "BIND…"; _lastActivationPressed = false; SaveSettings(); };
@@ -492,11 +523,13 @@ internal sealed class NeckAssistForm : Form
         dashboard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         dashboard.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         dashboard.RowStyles.Add(new RowStyle(SizeType.Absolute, 228));
-        dashboard.RowStyles.Add(new RowStyle(SizeType.Absolute, 170));
+        dashboard.RowStyles.Add(new RowStyle(SizeType.Absolute, 215));
         overview.Dock = DockStyle.Fill;
         overview.Margin = Padding.Empty;
         warning.Visible = false;
-        _enabled.SetBounds(12, 0, 300, 30);
+        _enabled.AutoSize = false;
+        _enabled.SetBounds(12, 0, 310, 34);
+        enabledIndicator.SetBounds(330, 0, 130, 34);
         _runtimeStatus.Visible = false;
         _backendStatus.SetBounds(12, 34, 1000, 30);
         graphHelp.Text = "Drag yellow to activate, orange to release, and green to set maximum view. Sliders stay synchronized.";
@@ -532,21 +565,57 @@ internal sealed class NeckAssistForm : Form
             help.SetToolTip(bar, descriptions[i]); help.SetToolTip(caption, descriptions[i]);
             compactSliders.Controls.Add(card, i % 5, i / 5);
         }
+        Panel pressControls = new() { Dock = DockStyle.Fill, BackColor = BackColor, Visible = false };
+        Label pressTitle = MakeLabel("SIMPLE MODE — HOLD THE BOUND INPUT TO LOOK BACK", 16, FontStyle.Bold);
+        pressTitle.ForeColor = Color.FromArgb(70, 220, 240); pressTitle.SetBounds(28, 18, 900, 38);
+        Label pressDescription = MakeLabel("Use War Thunder's normal recenter. Hold your Simple binding and turn past the deadzone: the selected rear rotation is added smoothly. Release the binding to return smoothly to your natural view.", 12, FontStyle.Regular);
+        pressDescription.SetBounds(28, 60, 1500, 62);
+        Label pressAngleLabel = MakeLabel("Camera rear rotation", 12, FontStyle.Bold); pressAngleLabel.ForeColor = Color.FromArgb(255, 190, 70); pressAngleLabel.SetBounds(28, 125, 330, 34);
+        Label pressAngleValue = MakeLabel(_settings.PressRotationAngle + "°", 12, FontStyle.Bold); pressAngleValue.ForeColor = Color.FromArgb(255, 190, 70); pressAngleValue.TextAlign = ContentAlignment.MiddleRight; pressAngleValue.SetBounds(620, 125, 85, 34);
+        AccentTrackBar pressRotation = new() { Minimum = 30, Maximum = 180, Value = _settings.PressRotationAngle, TickFrequency = 10, Accent = Color.FromArgb(255, 190, 70) };
+        pressRotation.SetBounds(28, 160, 680, 52);
+        pressRotation.ValueChanged += (_, _) => { _settings.PressRotationAngle = pressRotation.Value; pressAngleValue.Text = pressRotation.Value + "°"; SaveSettings(); };
+        Label deadzoneLabel = MakeLabel("Head-direction deadzone", 12, FontStyle.Bold); deadzoneLabel.ForeColor = Color.FromArgb(70, 220, 240); deadzoneLabel.SetBounds(785, 125, 360, 34);
+        Label deadzoneValue = MakeLabel(_settings.SimpleDeadzoneAngle + "°", 12, FontStyle.Bold); deadzoneValue.ForeColor = Color.FromArgb(70, 220, 240); deadzoneValue.TextAlign = ContentAlignment.MiddleRight; deadzoneValue.SetBounds(1380, 125, 85, 34);
+        AccentTrackBar simpleDeadzone = new() { Minimum = 0, Maximum = 45, Value = _settings.SimpleDeadzoneAngle, TickFrequency = 5, Accent = Color.FromArgb(70, 220, 240) };
+        simpleDeadzone.SetBounds(785, 160, 680, 52);
+        simpleDeadzone.ValueChanged += (_, _) => { _settings.SimpleDeadzoneAngle = simpleDeadzone.Value; deadzoneValue.Text = simpleDeadzone.Value + "°"; SaveSettings(); };
+        pressControls.Controls.AddRange(new Control[] { pressTitle, pressDescription, pressAngleLabel, pressAngleValue, pressRotation, deadzoneLabel, deadzoneValue, simpleDeadzone });
         bindings.Dock = DockStyle.Fill;
         foreach (Control c in bindings.Controls) c.Visible = false;
         recenterLabel.Visible = _recenterBind.Visible = clearRecenter.Visible = toggleLabel.Visible = _activationBind.Visible = clearToggle.Visible = true;
+        toggleLabel.Text = "ADVANCED TOGGLE";
+        Label simpleLabel = MakeLabel("SIMPLE HOLD", 11, FontStyle.Bold);
+        Button clearSimple = MakeButton("CLEAR");
+        CheckBox advancedBehavior = new() { Appearance = Appearance.Button, AutoSize = false, Checked = _settings.AdvancedActivationBehavior == "Hold", Text = _settings.AdvancedActivationBehavior == "Hold" ? "HOLD" : "TOGGLE", ForeColor = Color.White, BackColor = Color.FromArgb(35, 55, 60), TextAlign = ContentAlignment.MiddleCenter };
+        _simpleActivationBind.Click += (_, _) => CaptureBinding(2);
+        clearSimple.Click += (_, _) => { _settings.SimpleActivationBinding = "Not assigned"; _simpleActivationBind.Text = "BIND…"; _lastActivationPressed = false; SaveSettings(); };
+        advancedBehavior.CheckedChanged += (_, _) => { _settings.AdvancedActivationBehavior = advancedBehavior.Checked ? "Hold" : "Toggle"; advancedBehavior.Text = _settings.AdvancedActivationBehavior.ToUpperInvariant(); advancedBehavior.BackColor = advancedBehavior.Checked ? Color.FromArgb(25, 95, 55) : Color.FromArgb(35, 55, 60); _toggleActive = false; SaveSettings(); };
+        bindings.Controls.AddRange(new Control[] { simpleLabel, _simpleActivationBind, clearSimple, advancedBehavior });
         recenterLabel.SetBounds(12, 4, 235, 36); _recenterBind.SetBounds(250, 4, 250, 38); clearRecenter.SetBounds(515, 4, 100, 38);
-        toggleLabel.SetBounds(12, 54, 235, 36); _activationBind.SetBounds(250, 54, 250, 38); clearToggle.SetBounds(515, 54, 100, 38);
+        toggleLabel.SetBounds(12, 50, 235, 36); _activationBind.SetBounds(250, 50, 250, 38); clearToggle.SetBounds(515, 50, 100, 38);
+        advancedBehavior.SetBounds(630, 50, 130, 38);
+        simpleLabel.SetBounds(12, 96, 235, 36); _simpleActivationBind.SetBounds(250, 96, 250, 38); clearSimple.SetBounds(515, 96, 100, 38);
         pitchEnabled.Text = "Enable up/down assistance";
         bindings.Controls.Add(pitchEnabled);
         pitchEnabled.AutoSize = false;
         pitchEnabled.SetBounds(640, 8, 320, 38);
-        Label bindingHelp = MakeLabel("Recenter: use the same combo in War Thunder. Toggle: press once ON, again OFF. Clear removes the binding.", 9, FontStyle.Regular);
-        bindingHelp.SetBounds(12, 108, 1100, 44); bindings.Controls.Add(bindingHelp);
+        Label bindingHelp = MakeLabel("Advanced can toggle with each press or remain active while held. Recenter should match War Thunder. Keyboard, mouse and HOTAS inputs are supported.", 10.5f, FontStyle.Regular);
+        bindingHelp.SetBounds(12, 148, 710, 62); bindings.Controls.Add(bindingHelp);
+        Label speedLabel = MakeLabel("CAMERA TRANSITION SPEED", 10, FontStyle.Bold); speedLabel.ForeColor = Color.FromArgb(70, 220, 240); speedLabel.SetBounds(790, 12, 360, 30);
+        Label speedValue = MakeLabel(_settings.TransitionSpeed + "%", 10, FontStyle.Bold); speedValue.TextAlign = ContentAlignment.MiddleRight; speedValue.ForeColor = Color.FromArgb(70, 220, 240); speedValue.SetBounds(1450, 12, 90, 30);
+        AccentTrackBar transitionSpeed = new() { Minimum = 1, Maximum = 100, Value = _settings.TransitionSpeed, TickFrequency = 10, Accent = Color.FromArgb(70, 220, 240) };
+        transitionSpeed.SetBounds(790, 48, 750, 52);
+        Label speedHelp = MakeLabel("Lower = slower and softer.\nHigher = faster response.", 10.5f, FontStyle.Regular); speedHelp.SetBounds(790, 108, 760, 54);
+        transitionSpeed.ValueChanged += (_, _) => { _settings.TransitionSpeed = transitionSpeed.Value; speedValue.Text = transitionSpeed.Value + "%"; SaveSettings(); };
+        bindings.Controls.AddRange(new Control[] { speedLabel, speedValue, transitionSpeed, speedHelp });
         help.SetToolTip(_recenterBind, "Capture fresh button presses to replace the recenter combo. Buttons already held are ignored until released.");
         help.SetToolTip(_activationBind, "Bind a combo to switch Neck Assist ON or OFF without using the mouse.");
+        help.SetToolTip(advancedBehavior, "Choose whether the Advanced binding toggles assistance with each press or works only while held.");
+        help.SetToolTip(_simpleActivationBind, "Simple mode is active only while this keyboard, mouse, or HOTAS input is held.");
         help.SetToolTip(clearRecenter, "Remove the recenter binding."); help.SetToolTip(clearToggle, "Remove the ON/OFF binding.");
         dashboard.Controls.Add(overview, 0, 0); dashboard.Controls.Add(compactSliders, 0, 1); dashboard.Controls.Add(bindings, 0, 2);
+        dashboard.Controls.Add(pressControls, 0, 1);
         Controls.Add(dashboard); dashboard.BringToFront(); header.BringToFront();
         dashboard.Dock = DockStyle.None;
         void FitDashboard() => dashboard.SetBounds(0, header.Height, ClientSize.Width, Math.Max(480, ClientSize.Height - header.Height));
@@ -602,10 +671,10 @@ internal sealed class NeckAssistForm : Form
             SaveSettings();
         };
         CheckBox linkAxes = new() { Text = _settings.LinkAxes ? "Link axes: ON" : "Link axes: OFF", Appearance = Appearance.Button, AutoSize = false, Checked = _settings.LinkAxes, ForeColor = Color.White, BackColor = Color.FromArgb(35, 55, 60), TextAlign = ContentAlignment.MiddleCenter };
-        linkAxes.SetBounds(750, 0, 255, 32);
+        linkAxes.SetBounds(735, 0, 185, 32);
         overview.Controls.Add(linkAxes);
         CheckBox naturalRear = new() { Text = _settings.NaturalRearView ? "Rear-view boost: ON" : "Rear-view boost: OFF", Appearance = Appearance.Button, AutoSize = false, Checked = _settings.NaturalRearView, ForeColor = Color.White, BackColor = _settings.NaturalRearView ? Color.FromArgb(25, 95, 55) : Color.FromArgb(35, 55, 60), TextAlign = ContentAlignment.MiddleCenter };
-        naturalRear.SetBounds(1020, 0, 255, 32); overview.Controls.Add(naturalRear);
+        naturalRear.SetBounds(930, 0, 185, 32); overview.Controls.Add(naturalRear);
         void ExplainMovementMode() => graphHelp.Text = naturalRear.Checked
             ? "REAR-VIEW BOOST: extra rotation is added early; after the boost, your head and view continue together at 1:1."
             : "STANDARD: extra rotation increases throughout the turn. Drag yellow/orange/green markers or use the matching sliders.";
@@ -614,10 +683,107 @@ internal sealed class NeckAssistForm : Form
         help.SetToolTip(naturalRear, "OFF: amplification grows across your full head turn. ON: the extra rear angle is added sooner, then normal 1:1 movement is preserved.");
         ExplainMovementMode();
         SetRearControls();
+        RadioButton normalMode = new() { Text = "ADVANCED", Appearance = Appearance.Button, Checked = _settings.MovementMode == "Advanced", AutoSize = false, ForeColor = Color.White, TextAlign = ContentAlignment.MiddleCenter, BackColor = Color.FromArgb(35, 55, 60) };
+        RadioButton pressMode = new() { Text = "SIMPLE", Appearance = Appearance.Button, Checked = _settings.MovementMode == "Simple", AutoSize = false, ForeColor = Color.White, TextAlign = ContentAlignment.MiddleCenter, BackColor = Color.FromArgb(35, 55, 60) };
+        // Keep all three controls inside the 1625px design canvas, even at the normal minimum window width.
+        pressMode.SetBounds(1125, 0, 125, 32);
+        normalMode.SetBounds(1260, 0, 125, 32);
+        overview.Controls.AddRange(new Control[] { pressMode, normalMode });
+        Button restoreAdvancedDefaults = MakeButton("RESTORE DEFAULTS");
+        restoreAdvancedDefaults.SetBounds(1395, 0, 180, 32);
+        overview.Controls.Add(restoreAdvancedDefaults);
+        Label pressOverview = MakeLabel("SIMPLE MODE\n\nHold your assigned input, then turn beyond the deadzone to look behind you.", 18, FontStyle.Bold);
+        pressOverview.TextAlign = ContentAlignment.MiddleCenter; pressOverview.ForeColor = Color.FromArgb(180, 225, 235); pressOverview.Visible = false; overview.Controls.Add(pressOverview);
+        void LayoutPressOverview()
+        {
+            pressOverview.SetBounds(80, 100, Math.Max(300, overview.ClientSize.Width - 160), Math.Max(180, overview.ClientSize.Height - 150));
+            pressOverview.TextAlign = ContentAlignment.MiddleCenter;
+        }
+        void QueuePressOverviewLayout()
+        {
+            if (!IsHandleCreated) return;
+            BeginInvoke((Action)LayoutPressOverview);
+        }
+        void ApplyMovementModeUi()
+        {
+            bool press = pressMode.Checked;
+            _settings.MovementMode = press ? "Simple" : "Advanced";
+            _curvePreview.Visible = _pitchPreview.Visible = graphHelp.Visible = pitchEnabled.Visible = linkAxes.Visible = naturalRear.Visible = !press;
+            compactSliders.Visible = !press; pressControls.Visible = press; pressOverview.Visible = press;
+            restoreAdvancedDefaults.Visible = !press;
+            recenterLabel.Visible = _recenterBind.Visible = clearRecenter.Visible = !press;
+            toggleLabel.Visible = _activationBind.Visible = clearToggle.Visible = advancedBehavior.Visible = !press;
+            simpleLabel.Visible = _simpleActivationBind.Visible = clearSimple.Visible = press;
+            bindingHelp.Text = press
+                ? "Simple uses War Thunder's in-game recenter. Hold the assigned input and turn beyond the deadzone. Keyboard, mouse and HOTAS inputs are supported."
+                : "Advanced can Toggle with each press or remain active only while held. Recenter remains available.";
+            LayoutPressOverview();
+            if (press) QueuePressOverviewLayout();
+            normalMode.BackColor = !press ? Color.FromArgb(25, 95, 55) : Color.FromArgb(35, 55, 60);
+            pressMode.BackColor = press ? Color.FromArgb(25, 95, 55) : Color.FromArgb(35, 55, 60);
+            _toggleActive = _settings.Enabled; _runtimeAssistanceActive = press ? false : _toggleActive;
+            SaveSettings();
+        }
+        normalMode.CheckedChanged += (_, _) => { if (normalMode.Checked) ApplyMovementModeUi(); };
+        pressMode.CheckedChanged += (_, _) => { if (pressMode.Checked) ApplyMovementModeUi(); };
+        overview.SizeChanged += (_, _) => { if (pressOverview.Visible) LayoutPressOverview(); };
+        VisibleChanged += (_, _) => { if (Visible && pressOverview.Visible) QueuePressOverviewLayout(); };
+        Shown += (_, _) => { if (pressOverview.Visible) QueuePressOverviewLayout(); };
+        ApplyMovementModeUi();
         bool syncingAxes = false;
+        bool restoringDefaults = false;
+        restoreAdvancedDefaults.Click += (_, _) =>
+        {
+            restoringDefaults = true;
+            try
+            {
+                _settings.StartAngle = 21;
+                _settings.ReturnAngle = 12;
+                _settings.YawNaturalResumeAngle = 28;
+                _settings.MaximumViewAngle = 180;
+                _settings.YawCurvature = 98;
+                _settings.TransitionWidth = 15;
+                _settings.PitchStartAngle = 15;
+                _settings.PitchReturnAngle = 9;
+                _settings.PitchNaturalResumeAngle = 20;
+                _settings.PitchMaximumViewAngle = 115;
+                _settings.PitchCurvature = 98;
+                _settings.PitchTransitionWidth = 10;
+                _settings.LinkAxes = true;
+                _settings.NaturalRearView = true;
+                _settings.PitchEnabled = false;
+                _settings.PositionCompensation = true;
+                _settings.Curve = "Linear";
+                _settings.YawPoints.Clear();
+                _settings.YawBezier = new BezierNeckCurve();
+                _settings.PitchBezier = new BezierNeckCurve();
+
+                _startAngle.Value = 21;
+                _returnAngle.Value = 12;
+                yawResume.Value = 28;
+                _maximumAngle.Value = 180;
+                _smoothing.Value = 98;
+                pitchStart.Value = 15;
+                pitchReturn.Value = 9;
+                pitchResume.Value = 20;
+                pitchMaximum.Value = 115;
+                pitchSmoothing.Value = 98;
+                pitchEnabled.Checked = false;
+                linkAxes.Checked = true;
+                naturalRear.Checked = true;
+                _positionCompensation.Checked = true;
+                _curve.SelectedItem = "Linear";
+                _curvePreview.Bezier = _settings.YawBezier;
+                _pitchPreview.Bezier = _settings.PitchBezier;
+            }
+            finally { restoringDefaults = false; }
+            SaveSettings();
+            UpdateCurvePreview();
+        };
+        help.SetToolTip(restoreAdvancedDefaults, "Restore the recommended Advanced movement values. Your keyboard, mouse, and HOTAS bindings are preserved.");
         void SyncAxes(bool fromPitch)
         {
-            if (!_settings.LinkAxes || syncingAxes) return;
+            if (!_settings.LinkAxes || syncingAxes || restoringDefaults) return;
             syncingAxes = true;
             try
             {
@@ -662,7 +828,7 @@ internal sealed class NeckAssistForm : Form
         _statusTimer.Tick += (_, _) =>
         {
             PollBindings();
-            _openXrBackend.UpdateMotion(_settings);
+            _openXrBackend.UpdateMotion(_settings, _runtimeAssistanceActive);
             RefreshTelemetry();
             if (++_statusTicks >= 25) { _statusTicks = 0; RefreshStatus(); }
         };
@@ -738,10 +904,11 @@ internal sealed class NeckAssistForm : Form
         FlatStyle = FlatStyle.Flat
     };
 
-    private void CaptureBinding(bool recenter)
+    private void CaptureBinding(int kind)
     {
         _capturingBinding = true;
-        using HotasBindingDialog dialog = new(recenter ? "Press a RECENTER button or combination" : "Press a TOGGLE button or combination");
+        string action = kind == 0 ? "RECENTER" : kind == 1 ? "ADVANCED TOGGLE" : "SIMPLE HOLD";
+        using HotasBindingDialog dialog = new($"Press a {action} input or combination");
         DialogResult result;
         try { result = dialog.ShowDialog(this); }
         finally
@@ -752,15 +919,20 @@ internal sealed class NeckAssistForm : Form
         }
         if (result != DialogResult.OK || string.IsNullOrWhiteSpace(dialog.Binding)) return;
 
-        if (recenter)
+        if (kind == 0)
         {
             _settings.RecenterBinding = dialog.Binding;
             _recenterBind.Text = FormatBinding(dialog.Binding);
         }
-        else
+        else if (kind == 1)
         {
             _settings.ActivationBinding = dialog.Binding;
             _activationBind.Text = FormatBinding(dialog.Binding);
+        }
+        else
+        {
+            _settings.SimpleActivationBinding = dialog.Binding;
+            _simpleActivationBind.Text = FormatBinding(dialog.Binding);
         }
         SaveSettings();
     }
@@ -902,13 +1074,19 @@ internal sealed class NeckAssistForm : Form
     {
         if (_capturingBinding) return;
         bool togglePressed = HotasBindingDialog.IsBindingPressed(_settings.ActivationBinding);
-        if (togglePressed && !_lastActivationPressed) _enabled.Checked = !_enabled.Checked;
+        if (_settings.MovementMode == "Advanced" && _settings.AdvancedActivationBehavior == "Toggle" && togglePressed && !_lastActivationPressed) _toggleActive = !_toggleActive;
         _lastActivationPressed = togglePressed;
         if (!_settings.Enabled)
         {
+            _runtimeAssistanceActive = false;
             _openXrBackend.SetHeld(true, _settings.PitchEnabled);
             return;
         }
+
+        bool simplePressed = HotasBindingDialog.IsBindingPressed(_settings.SimpleActivationBinding);
+        _runtimeAssistanceActive = _settings.MovementMode == "Simple"
+            ? simplePressed
+            : _settings.AdvancedActivationBehavior == "Hold" ? togglePressed : _toggleActive;
 
         bool recenterPressed = HotasBindingDialog.IsBindingPressed(_settings.RecenterBinding);
         if (recenterPressed && !_lastRecenterPressed) _openXrBackend.Recenter();
@@ -1152,6 +1330,8 @@ internal sealed class HotasBindingDialog : Form
 
     [DllImport("winmm.dll")]
     private static extern int joyGetPosEx(int joystickId, ref JoyInfoEx info);
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int virtualKey);
 
     private const int JoyReturnButtons = 0x80;
     private readonly Label _status;
@@ -1161,12 +1341,13 @@ internal sealed class HotasBindingDialog : Form
     private string _candidate = "";
     private int _stableTicks;
     private readonly Dictionary<int, uint> _ignoredHeld = new();
+    private readonly HashSet<int> _ignoredKeys = new();
     private bool _baselineCaptured;
     public string Binding { get; private set; } = "";
 
     public HotasBindingDialog(string instruction)
     {
-        Text = "Bind HOTAS buttons";
+        Text = "Bind keyboard, mouse, or HOTAS input";
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
@@ -1187,7 +1368,7 @@ internal sealed class HotasBindingDialog : Form
 
         _status = new Label
         {
-            Text = "Tap one button, or press a combination together.\nRelease, then click Assign.",
+            Text = "Press one keyboard, mouse, or HOTAS button—or hold a combination.\nRelease everything, then click Assign.",
             Font = new Font("Segoe UI", 10),
             ForeColor = Color.FromArgb(130, 230, 140),
             TextAlign = ContentAlignment.MiddleCenter
@@ -1214,6 +1395,7 @@ internal sealed class HotasBindingDialog : Form
             _stableTicks = 0;
             _baselineCaptured = false;
             _ignoredHeld.Clear();
+            _ignoredKeys.Clear();
             _assign.Enabled = false;
             _status.Text = "Press your combo, then click Assign to save it.";
         };
@@ -1232,6 +1414,22 @@ internal sealed class HotasBindingDialog : Form
     {
         if (_pendingBinding.Length > 0) return;
         List<string> pressed = new();
+        int[] mouseKeys = { 1, 2, 4, 5, 6 };
+        if (!_baselineCaptured)
+        {
+            for (int vk = 1; vk < 255; vk++) if ((GetAsyncKeyState(vk) & 0x8000) != 0) _ignoredKeys.Add(vk);
+        }
+        _ignoredKeys.RemoveWhere(vk => (GetAsyncKeyState(vk) & 0x8000) == 0);
+        for (int vk = 1; vk < 255; vk++)
+        {
+            if ((GetAsyncKeyState(vk) & 0x8000) == 0 || _ignoredKeys.Contains(vk)) continue;
+            if (mouseKeys.Contains(vk))
+            {
+                string mouse = vk switch { 1 => "Left", 2 => "Right", 4 => "Middle", 5 => "X1", 6 => "X2", _ => vk.ToString() };
+                pressed.Add("MOUSE:" + mouse);
+            }
+            else pressed.Add("KEY:" + ((Keys)vk & Keys.KeyCode));
+        }
         int devices = Math.Min(16, joyGetNumDevs());
         for (int joystick = 0; joystick < devices; joystick++)
         {
@@ -1280,6 +1478,17 @@ internal sealed class HotasBindingDialog : Form
         Dictionary<int, uint> states = new();
         foreach (string token in tokens)
         {
+            if (token.StartsWith("KEY:", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!Enum.TryParse(token[4..], true, out Keys key) || (GetAsyncKeyState((int)(key & Keys.KeyCode)) & 0x8000) == 0) return false;
+                continue;
+            }
+            if (token.StartsWith("MOUSE:", StringComparison.OrdinalIgnoreCase))
+            {
+                int vk = token[6..].ToUpperInvariant() switch { "LEFT" => 1, "RIGHT" => 2, "MIDDLE" => 4, "X1" => 5, "X2" => 6, _ => 0 };
+                if (vk == 0 || (GetAsyncKeyState(vk) & 0x8000) == 0) return false;
+                continue;
+            }
             Match match = System.Text.RegularExpressions.Regex.Match(token, @"^JOY(?<joy>\d+):B(?<button>\d+)$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
             if (!match.Success || !int.TryParse(match.Groups["joy"].Value, out int joyNumber) ||
                 !int.TryParse(match.Groups["button"].Value, out int buttonNumber) || buttonNumber is < 1 or > 32) return false;
