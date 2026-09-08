@@ -30,7 +30,7 @@ Watch the full setup and usage guide here:
   * Medium
   * High
 
-### Neck Rotation Assistance (v1.4)
+### Neck Assistant (v1.5)
 
 * Embedded OpenXR neck-assistance controls with live headset/view graphs
 * OpenXR runtime support including SteamVR OpenXR and VDXR
@@ -45,6 +45,21 @@ Watch the full setup and usage guide here:
 * Adjustable camera transition speed
 * Persistent active state with a dedicated green status icon
 * Restore recommended Advanced defaults without clearing bindings
+
+### KeyBind Assistant (v1.5)
+
+* Maps keyboard, mouse, HOTAS buttons, or combinations to useful War Thunder keyboard commands
+* Includes VR Head Position Up, VR Head Position Down, and Switch map to battlefield
+* Defaults to disabled and remembers the user's enabled state
+* Uses a blue navigation icon while off and a green icon while active
+* Prevents generated commands from contaminating Neck Assistant binding capture
+
+### Application Options (v1.5)
+
+* Optional beta-release update channel
+* Close to system tray and start with Windows options
+* Single-instance protection restores the existing window instead of opening duplicates
+* Updates preserve app settings, graphics profiles, and control profiles
 
 ### Settings Capture
 
@@ -98,7 +113,7 @@ Have fun. ;)
 4. Apply the desired settings
 5. Launch War Thunder
 
-For Neck Assist, enable it before starting the VR session so the OpenXR layer can load. Once connected, graph and slider changes apply live without restarting the game. Yellow starts the boost, orange releases it when returning to center, cyan restores natural 1:1 movement, and green controls the maximum resulting view.
+For Neck Assistant, enable it before starting the VR session so the OpenXR layer can load. Once connected, graph and slider changes apply live without restarting the game. Yellow starts the boost, orange releases it when returning to center, cyan restores natural 1:1 movement, and green controls the maximum resulting view.
 
 ---
 

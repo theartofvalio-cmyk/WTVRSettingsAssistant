@@ -166,7 +166,8 @@ public class MainForm : Form
     // Change these to true later if you want to re-enable F12 layout editing and external layout files.
     private const bool LayoutEditorEnabled = false;
     private const bool LoadExternalLayoutFiles = false;
-    private const string CurrentVersion = "1.4";
+    private const string CurrentVersion = "1.5";
+    private const string BuildChannelLabel = "";
     private const string GitHubLatestReleaseApi = "https://api.github.com/repos/theartofvalio-cmyk/WTVRSettingsAssistant/releases/latest";
     private const string GitHubReleasesApi = "https://api.github.com/repos/theartofvalio-cmyk/WTVRSettingsAssistant/releases?per_page=30";
     private const string GitHubReleasesUrl = "https://github.com/theartofvalio-cmyk/WTVRSettingsAssistant/releases";
@@ -182,12 +183,12 @@ public class MainForm : Form
     "FontSize": 0
   },
   "VersionText": {
-    "X": 328,
-    "Y": 681,
-    "Width": 207,
-    "Height": 66,
+    "X": 268,
+    "Y": 675,
+    "Width": 360,
+    "Height": 72,
     "ZOrder": 1,
-    "FontSize": 38
+    "FontSize": 32
   },
   "VRButton": {
     "X": 920,
@@ -215,10 +216,10 @@ public class MainForm : Form
   },
   "InfoIcon": {
     "X": 1516,
-    "Y": 270,
+    "Y": 150,
     "Width": 81,
     "Height": 81,
-    "ZOrder": 4,
+    "ZOrder": 5,
     "FontSize": 0
   },
   "SettingsIcon": {
@@ -226,7 +227,31 @@ public class MainForm : Form
     "Y": 25,
     "Width": 114,
     "Height": 115,
-    "ZOrder": 5,
+    "ZOrder": 4,
+    "FontSize": 0
+  },
+  "NeckAssistButton": {
+    "X": 1516,
+    "Y": 245,
+    "Width": 81,
+    "Height": 81,
+    "ZOrder": 6,
+    "FontSize": 0
+  },
+  "HiddenKeybindsButton": {
+    "X": 1516,
+    "Y": 340,
+    "Width": 81,
+    "Height": 81,
+    "ZOrder": 7,
+    "FontSize": 0
+  },
+  "UpdateButton": {
+    "X": 1516,
+    "Y": 435,
+    "Width": 81,
+    "Height": 81,
+    "ZOrder": 8,
     "FontSize": 0
   }
 }
@@ -2880,8 +2905,11 @@ render{
     private bool _updatePromptShown;
     private string _latestReleaseUrl = GitHubReleasesUrl;
     private NeckAssistForm? _neckAssistForm;
+    private HiddenKeybindsForm? _hiddenKeybindsForm;
     private Image? _neckAssistImage;
     private Image? _neckAssistActiveImage;
+    private Image? _hiddenKeybindsImage;
+    private Image? _hiddenKeybindsActiveImage;
 
     private ComboBox? _desktopGraphicsApiCombo;
     private ComboBox? _vrGraphicsApiCombo;
@@ -3048,7 +3076,8 @@ render{
                 HideToTray();
                 return;
             }
-            _neckAssistForm?.Close();
+        _neckAssistForm?.Close();
+            _hiddenKeybindsForm?.Close();
             SaveState();
         };
 
@@ -3433,7 +3462,8 @@ render{
         _mainPanel.Controls.Add(_mainCanvas);
 
         _mainCanvas.AddImage("MainLogo", _mainLogo, new Rectangle(0, -11, 874, 889), ArmSecretCode);
-        _mainCanvas.AddText("VersionText", $"Version {CurrentVersion}", new Rectangle(300, 685, 275, 119), 50.48309f, FontStyle.Regular);
+        string displayedVersion = $"Version {CurrentVersion}" + (string.IsNullOrWhiteSpace(BuildChannelLabel) ? "" : $" {BuildChannelLabel}");
+        _mainCanvas.AddText("VersionText", displayedVersion, new Rectangle(268, 675, 360, 72), 32f, FontStyle.Regular);
         _mainCanvas.AddImage("VRButton", _vrOrange, new Rectangle(920, 310, 560, 241), ApplyVrMode);
         _mainCanvas.AddImage("MonitorButton", _monitorOrange, new Rectangle(920, 55, 560, 234), ApplyMonitorMode);
         _mainCanvas.AddImage("PlayButton", _playOff, new Rectangle(830, 570, 740, 200), null);
@@ -3467,13 +3497,14 @@ render{
         }
         _mainCanvas.SetItemToolTip("YoutubeButton", "Subscribe to my War Thunder VR channel on YouTube");
 
-        _mainCanvas.AddImage("UpdateButton", _updateGreen, new Rectangle(1516, 372, 81, 81), CheckForUpdatesFromButton);
         _neckAssistImage ??= SafeLoadImage("NeckAssist.png");
         _neckAssistActiveImage ??= SafeLoadImage("NeckAssist_Active.png");
-        _mainCanvas.AddImage("NeckAssistButton", IsNeckAssistSavedEnabled() ? _neckAssistActiveImage : _neckAssistImage, new Rectangle(1516, 168, 81, 81), ToggleNeckAssistPanel);
-        _mainCanvas.SetItemToolTip("NeckAssistButton", IsNeckAssistSavedEnabled() ? "Neck Assist is ACTIVE — open controls" : "Neck Assist is OFF — open controls");
+        _hiddenKeybindsImage ??= SafeLoadImage("KeyBindAssistant_Inactive_v2.png");
+        _hiddenKeybindsActiveImage ??= SafeLoadImage("HiddenKeybinds-v3.png");
+        _mainCanvas.AddImage("NeckAssistButton", IsNeckAssistSavedEnabled() ? _neckAssistActiveImage : _neckAssistImage, new Rectangle(1516, 245, 81, 81), ToggleNeckAssistPanel);
+        _mainCanvas.SetItemToolTip("NeckAssistButton", IsNeckAssistSavedEnabled() ? "Neck Assistant is ACTIVE — open controls" : "Neck Assistant is OFF — open controls");
 
-        _mainCanvas.AddImage("InfoIcon", _infoImage, new Rectangle(1516, 168, 81, 81), () =>
+        _mainCanvas.AddImage("InfoIcon", _infoImage, new Rectangle(1516, 150, 81, 81), () =>
         {
             ShowScreen(_aboutPanel);
         });
@@ -3481,6 +3512,10 @@ render{
         {
             ShowScreen(_settingsPanel);
         });
+        bool keyBindAssistantActive = IsKeyBindAssistantSavedEnabled();
+        _mainCanvas.AddImage("HiddenKeybindsButton", keyBindAssistantActive ? _hiddenKeybindsActiveImage : _hiddenKeybindsImage, new Rectangle(1516, 340, 81, 81), ToggleHiddenKeybindsPanel);
+        _mainCanvas.SetItemToolTip("HiddenKeybindsButton", keyBindAssistantActive ? "KeyBind Assistant is ACTIVE — open controls" : "KeyBind Assistant is OFF — open controls");
+        _mainCanvas.AddImage("UpdateButton", _updateGreen, new Rectangle(1516, 435, 81, 81), CheckForUpdatesFromButton);
 
         _mainCanvas.ApplyLayout(ParseBakedLayout(BakedMainLayoutJson));
     }
@@ -3511,6 +3546,59 @@ render{
         _neckAssistForm.BringToFront();
     }
 
+    private void ToggleHiddenKeybindsPanel()
+    {
+        if (_hiddenKeybindsForm is { IsDisposed: false, Visible: true })
+        {
+            _hiddenKeybindsForm.Hide();
+            return;
+        }
+
+        if (_hiddenKeybindsForm == null || _hiddenKeybindsForm.IsDisposed)
+        {
+            _hiddenKeybindsForm = new HiddenKeybindsForm(AppFolder, _homeImage, _infoImage, () =>
+            {
+                _hiddenKeybindsForm?.Hide();
+                ShowScreen(_aboutPanel);
+            });
+            _hiddenKeybindsForm.AssistantStateChanged += (_, _) => RefreshKeyBindAssistantIcon();
+            _hiddenKeybindsForm.CloseRequested += (_, _) =>
+            {
+                _hiddenKeybindsForm?.Hide();
+                ShowScreen(_mainPanel);
+            };
+            _hiddenKeybindsForm.FormClosed += (_, _) => _hiddenKeybindsForm = null;
+            _hiddenKeybindsForm.TopLevel = false;
+            _hiddenKeybindsForm.FormBorderStyle = FormBorderStyle.None;
+            _hiddenKeybindsForm.Dock = DockStyle.Fill;
+            Controls.Add(_hiddenKeybindsForm);
+        }
+
+        _hiddenKeybindsForm.Bounds = ClientRectangle;
+        _hiddenKeybindsForm.Show();
+        _hiddenKeybindsForm.BringToFront();
+    }
+
+    private bool IsKeyBindAssistantSavedEnabled()
+    {
+        try
+        {
+            string path = Path.Combine(SettingsFolder, "hidden_keybinds.json");
+            if (!File.Exists(path)) return false;
+            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
+            return document.RootElement.TryGetProperty("Enabled", out JsonElement enabled) && enabled.GetBoolean();
+        }
+        catch { return false; }
+    }
+
+    private void RefreshKeyBindAssistantIcon()
+    {
+        if (_mainCanvas == null || _hiddenKeybindsImage == null || _hiddenKeybindsActiveImage == null) return;
+        bool active = _hiddenKeybindsForm?.AssistantEnabled ?? IsKeyBindAssistantSavedEnabled();
+        _mainCanvas.SetImage("HiddenKeybindsButton", active ? _hiddenKeybindsActiveImage : _hiddenKeybindsImage);
+        _mainCanvas.SetItemToolTip("HiddenKeybindsButton", active ? "KeyBind Assistant is ACTIVE — open controls" : "KeyBind Assistant is OFF — open controls");
+    }
+
     private bool IsNeckAssistSavedEnabled()
     {
         try
@@ -3528,7 +3616,7 @@ render{
         if (_mainCanvas == null || _neckAssistImage == null || _neckAssistActiveImage == null) return;
         bool active = _neckAssistForm?.AssistanceEnabled ?? IsNeckAssistSavedEnabled();
         _mainCanvas.SetImage("NeckAssistButton", active ? _neckAssistActiveImage : _neckAssistImage);
-        _mainCanvas.SetItemToolTip("NeckAssistButton", active ? "Neck Assist is ACTIVE — open controls" : "Neck Assist is OFF — open controls");
+        _mainCanvas.SetItemToolTip("NeckAssistButton", active ? "Neck Assistant is ACTIVE — open controls" : "Neck Assistant is OFF — open controls");
     }
 
     private void PositionNeckAssistPanel()
@@ -4349,7 +4437,7 @@ render{
             "HowToText",
             "1. Select the War Thunder installation folder; the app finds config.blk and the launcher.\n\n" +
             "2. Capture Desktop/VR graphics and optional control profiles, then press MONITOR or VR to apply them.\n\n" +
-            "3. Open Neck Assist and switch it ON before starting VR. It works with OpenXR runtimes including SteamVR OpenXR and VDXR; the green icon confirms it remains active.\n\n" +
+            "3. Open Neck Assistant and switch it ON before starting VR. It works with OpenXR runtimes including SteamVR OpenXR and VDXR; the green icon confirms it remains active.\n\n" +
             "4. ADVANCED uses adjustable rear-view curves and can work as Toggle or Hold. SIMPLE adds a fixed rear rotation while its assigned input is held.\n\n" +
             "5. Bind keyboard, mouse or HOTAS inputs. Simple uses War Thunder's in-game recenter and its deadzone chooses the viewing direction.",
             new Rectangle(40, 340, 700, 365),
@@ -4369,13 +4457,13 @@ render{
 
         _aboutCanvas.AddText(
             "PatchNotesText",
-            "• Advanced and Simple Neck Assist movement modes\n\n" +
-            "• OpenXR support including SteamVR OpenXR and VDXR\n\n" +
-            "• Simple Hold rear view with rotation and direction-deadzone controls\n\n" +
-            "• Keyboard, mouse and HOTAS single/combo input bindings\n\n" +
-            "• Adjustable camera transition speed and Advanced Toggle/Hold behavior\n\n" +
-            "• Persistent ON/OFF state with dedicated green active icon\n\n" +
-            "• Restore Advanced defaults without clearing bindings, plus clearer layouts and help text",
+            "• New KeyBind Assistant maps keyboard, mouse or HOTAS inputs to hidden War Thunder commands\n\n" +
+            "• VR head position Up/Down and Switch map to battlefield shortcuts\n\n" +
+            "• Persistent blue OFF / green ACTIVE icons for both assistants\n\n" +
+            "• Corrected game input injection and administrator-level error reporting\n\n" +
+            "• App options for beta updates, minimize to tray and start with Windows\n\n" +
+            "• Single-instance protection: reopening restores the existing window\n\n" +
+            "• Safer updates preserve settings, graphics profiles and control profiles",
             new Rectangle(830, 340, 690, 350),
             24f,
             FontStyle.Regular,
@@ -6723,7 +6811,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Wait-Process -Id $ProcessId -ErrorAction SilentlyContinue
 
-$preservedFolders = @('Settings', 'GraphicSettings')
+$preservedFolders = @('Settings', 'GraphicSettings', 'ControlSettings')
 $backupRoot = Join-Path $TemporaryRoot 'backup'
 $replacedFiles = New-Object System.Collections.Generic.List[string]
 $files = Get-ChildItem -LiteralPath $PayloadRoot -Recurse -File

@@ -13,6 +13,9 @@ internal sealed class AccentTrackBar : TrackBar
     public Color Accent { get; set; } = Color.FromArgb(255, 190, 70);
     public AccentTrackBar()
     {
+        // Native TrackBar AutoSize overrides SetBounds at higher DPI and covers
+        // adjacent labels, although our custom-painted rail looks much shorter.
+        AutoSize = false;
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
         ValueChanged += (_, _) => Invalidate();
     }
@@ -167,7 +170,7 @@ internal sealed class NeckAssistForm : Form
         _runtimeAssistanceActive = _settings.Enabled;
         _openXrBackend = new OpenXrNeckBackend(appFolder);
 
-        Text = "Neck Rotation Assistance";
+        Text = "Neck Assistant";
         AutoScaleMode = AutoScaleMode.None;
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual;
@@ -186,7 +189,7 @@ internal sealed class NeckAssistForm : Form
         closeButton.Click += (_, _) => CloseRequested?.Invoke(this, EventArgs.Empty);
         Controls.Add(closeButton);
 
-        Label title = MakeLabel("NECK ROTATION", 24, FontStyle.Bold);
+        Label title = MakeLabel("NECK ASSISTANT", 24, FontStyle.Bold);
         title.SetBounds(20, 14, 410, 58);
         Controls.Add(title);
 
@@ -196,7 +199,7 @@ internal sealed class NeckAssistForm : Form
 
         _enabled = new CheckBox
         {
-            Text = "Neck assistance ON / OFF",
+            Text = "Enable Neck Assistant",
             Font = new Font("Segoe UI", 12, FontStyle.Bold),
             ForeColor = Color.White,
             AutoSize = true,
@@ -388,7 +391,7 @@ internal sealed class NeckAssistForm : Form
         closeButton.Font = new Font("Segoe UI", 11, FontStyle.Bold);
         closeButton.Anchor = AnchorStyles.Top | AnchorStyles.Left;
         closeButton.SetBounds(20, 14, 90, 38);
-        title.Text = "NECK ROTATION ASSISTANCE";
+        title.Text = "NECK ASSISTANT";
         title.Font = new Font("Segoe UI", 18, FontStyle.Bold);
         title.SetBounds(130, 12, 650, 44);
         header.Controls.AddRange(new Control[] { closeButton, title });
@@ -484,7 +487,7 @@ internal sealed class NeckAssistForm : Form
         }
         content.Controls.AddRange(new Control[] { overview, sliderRows, otherSettings, bindings });
         activationHint.Text = "Use the ON / OFF switch or your toggle combo. Press the combo once to enable assistance, again to disable it.";
-        Label toggleLabel = MakeLabel("NECK ASSIST TOGGLE", 11, FontStyle.Bold);
+        Label toggleLabel = MakeLabel("NECK ASSISTANT TOGGLE", 11, FontStyle.Bold);
         toggleLabel.SetBounds(20, 215, 220, 36);
         _activationBind.SetBounds(250, 215, 260, 38);
         _activationBind.Click += (_, _) => CaptureBinding(1);
@@ -522,16 +525,19 @@ internal sealed class NeckAssistForm : Form
         TableLayoutPanel dashboard = new() { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(16, 0, 16, 8), BackColor = BackColor };
         dashboard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         dashboard.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        dashboard.RowStyles.Add(new RowStyle(SizeType.Absolute, 228));
-        dashboard.RowStyles.Add(new RowStyle(SizeType.Absolute, 215));
+        // Keep both live graphs fully visible at the normal window size.
+        // The former fixed lower rows starved the vertical graph of height.
+        dashboard.RowStyles.Add(new RowStyle(SizeType.Absolute, 220));
+        dashboard.RowStyles.Add(new RowStyle(SizeType.Absolute, 140));
         overview.Dock = DockStyle.Fill;
         overview.Margin = Padding.Empty;
         warning.Visible = false;
         _enabled.AutoSize = false;
-        _enabled.SetBounds(12, 0, 310, 34);
-        enabledIndicator.SetBounds(330, 0, 130, 34);
+        _enabled.SetBounds(12, 0, 320, 34);
+        enabledIndicator.SetBounds(338, 0, 120, 34);
         _runtimeStatus.Visible = false;
-        _backendStatus.SetBounds(12, 34, 1000, 30);
+        // Keep the status line clear of the taller top-row buttons at high DPI.
+        _backendStatus.SetBounds(12, 42, 1000, 30);
         graphHelp.Text = "Drag yellow to activate, orange to release, and green to set maximum view. Sliders stay synchronized.";
         overview.SizeChanged += (_, _) =>
         {
@@ -539,7 +545,7 @@ internal sealed class NeckAssistForm : Form
             _curvePreview.SetBounds(12, 70, Math.Max(200, overview.Width - 24), Math.Max(80, overview.Height - 124));
             graphHelp.SetBounds(12, overview.Height - 50, overview.Width - 24, 50);
         };
-        TableLayoutPanel compactSliders = new() { Dock = DockStyle.Fill, ColumnCount = 5, RowCount = 2, Margin = Padding.Empty };
+        TableLayoutPanel compactSliders = new() { Dock = DockStyle.Fill, ColumnCount = 5, RowCount = 2, Margin = Padding.Empty, Padding = new Padding(0, 10, 0, 0) };
         for (int i = 0; i < 5; i++) compactSliders.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20));
         for (int i = 0; i < 2; i++) compactSliders.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
         TrackBar[] visibleSliders = { _startAngle, _returnAngle, yawResume, _maximumAngle, _smoothing, pitchStart, pitchReturn, pitchResume, pitchMaximum, pitchSmoothing };
@@ -567,18 +573,18 @@ internal sealed class NeckAssistForm : Form
         }
         Panel pressControls = new() { Dock = DockStyle.Fill, BackColor = BackColor, Visible = false };
         Label pressTitle = MakeLabel("SIMPLE MODE — HOLD THE BOUND INPUT TO LOOK BACK", 16, FontStyle.Bold);
-        pressTitle.ForeColor = Color.FromArgb(70, 220, 240); pressTitle.SetBounds(28, 18, 900, 38);
+        pressTitle.ForeColor = Color.FromArgb(70, 220, 240); pressTitle.SetBounds(28, 28, 900, 38);
         Label pressDescription = MakeLabel("Use War Thunder's normal recenter. Hold your Simple binding and turn past the deadzone: the selected rear rotation is added smoothly. Release the binding to return smoothly to your natural view.", 12, FontStyle.Regular);
-        pressDescription.SetBounds(28, 60, 1500, 62);
-        Label pressAngleLabel = MakeLabel("Camera rear rotation", 12, FontStyle.Bold); pressAngleLabel.ForeColor = Color.FromArgb(255, 190, 70); pressAngleLabel.SetBounds(28, 125, 330, 34);
-        Label pressAngleValue = MakeLabel(_settings.PressRotationAngle + "°", 12, FontStyle.Bold); pressAngleValue.ForeColor = Color.FromArgb(255, 190, 70); pressAngleValue.TextAlign = ContentAlignment.MiddleRight; pressAngleValue.SetBounds(620, 125, 85, 34);
+        pressDescription.SetBounds(28, 70, 1500, 52);
+        Label pressAngleLabel = MakeLabel("Camera rear rotation", 12, FontStyle.Bold); pressAngleLabel.ForeColor = Color.FromArgb(255, 190, 70); pressAngleLabel.SetBounds(28, 135, 330, 34);
+        Label pressAngleValue = MakeLabel(_settings.PressRotationAngle + "°", 12, FontStyle.Bold); pressAngleValue.ForeColor = Color.FromArgb(255, 190, 70); pressAngleValue.TextAlign = ContentAlignment.MiddleRight; pressAngleValue.SetBounds(620, 135, 85, 34);
         AccentTrackBar pressRotation = new() { Minimum = 30, Maximum = 180, Value = _settings.PressRotationAngle, TickFrequency = 10, Accent = Color.FromArgb(255, 190, 70) };
-        pressRotation.SetBounds(28, 160, 680, 52);
+        pressRotation.SetBounds(28, 170, 680, 46);
         pressRotation.ValueChanged += (_, _) => { _settings.PressRotationAngle = pressRotation.Value; pressAngleValue.Text = pressRotation.Value + "°"; SaveSettings(); };
-        Label deadzoneLabel = MakeLabel("Head-direction deadzone", 12, FontStyle.Bold); deadzoneLabel.ForeColor = Color.FromArgb(70, 220, 240); deadzoneLabel.SetBounds(785, 125, 360, 34);
-        Label deadzoneValue = MakeLabel(_settings.SimpleDeadzoneAngle + "°", 12, FontStyle.Bold); deadzoneValue.ForeColor = Color.FromArgb(70, 220, 240); deadzoneValue.TextAlign = ContentAlignment.MiddleRight; deadzoneValue.SetBounds(1380, 125, 85, 34);
+        Label deadzoneLabel = MakeLabel("Head-direction deadzone", 12, FontStyle.Bold); deadzoneLabel.ForeColor = Color.FromArgb(70, 220, 240); deadzoneLabel.SetBounds(785, 135, 360, 34);
+        Label deadzoneValue = MakeLabel(_settings.SimpleDeadzoneAngle + "°", 12, FontStyle.Bold); deadzoneValue.ForeColor = Color.FromArgb(70, 220, 240); deadzoneValue.TextAlign = ContentAlignment.MiddleRight; deadzoneValue.SetBounds(1380, 135, 85, 34);
         AccentTrackBar simpleDeadzone = new() { Minimum = 0, Maximum = 45, Value = _settings.SimpleDeadzoneAngle, TickFrequency = 5, Accent = Color.FromArgb(70, 220, 240) };
-        simpleDeadzone.SetBounds(785, 160, 680, 52);
+        simpleDeadzone.SetBounds(785, 170, 680, 46);
         simpleDeadzone.ValueChanged += (_, _) => { _settings.SimpleDeadzoneAngle = simpleDeadzone.Value; deadzoneValue.Text = simpleDeadzone.Value + "°"; SaveSettings(); };
         pressControls.Controls.AddRange(new Control[] { pressTitle, pressDescription, pressAngleLabel, pressAngleValue, pressRotation, deadzoneLabel, deadzoneValue, simpleDeadzone });
         bindings.Dock = DockStyle.Fill;
@@ -596,21 +602,21 @@ internal sealed class NeckAssistForm : Form
         toggleLabel.SetBounds(12, 50, 235, 36); _activationBind.SetBounds(250, 50, 250, 38); clearToggle.SetBounds(515, 50, 100, 38);
         advancedBehavior.SetBounds(630, 50, 130, 38);
         simpleLabel.SetBounds(12, 96, 235, 36); _simpleActivationBind.SetBounds(250, 96, 250, 38); clearSimple.SetBounds(515, 96, 100, 38);
-        pitchEnabled.Text = "Enable up/down assistance";
+        pitchEnabled.Text = "Enable up/down";
         bindings.Controls.Add(pitchEnabled);
         pitchEnabled.AutoSize = false;
         pitchEnabled.SetBounds(640, 8, 320, 38);
-        Label bindingHelp = MakeLabel("Advanced can toggle with each press or remain active while held. Recenter should match War Thunder. Keyboard, mouse and HOTAS inputs are supported.", 10.5f, FontStyle.Regular);
-        bindingHelp.SetBounds(12, 148, 710, 62); bindings.Controls.Add(bindingHelp);
-        Label speedLabel = MakeLabel("CAMERA TRANSITION SPEED", 10, FontStyle.Bold); speedLabel.ForeColor = Color.FromArgb(70, 220, 240); speedLabel.SetBounds(790, 12, 360, 30);
-        Label speedValue = MakeLabel(_settings.TransitionSpeed + "%", 10, FontStyle.Bold); speedValue.TextAlign = ContentAlignment.MiddleRight; speedValue.ForeColor = Color.FromArgb(70, 220, 240); speedValue.SetBounds(1450, 12, 90, 30);
+        Label bindingHelp = MakeLabel("Toggle: press once ON, again OFF. Recenter remains available.", 10.5f, FontStyle.Regular);
+        bindingHelp.SetBounds(12, 94, 710, 32); bindings.Controls.Add(bindingHelp);
+        Label speedLabel = MakeLabel("CAMERA TRANSITION SPEED", 10, FontStyle.Bold); speedLabel.ForeColor = Color.FromArgb(70, 220, 240); speedLabel.SetBounds(790, 2, 360, 28);
+        Label speedValue = MakeLabel(_settings.TransitionSpeed + "%", 10, FontStyle.Bold); speedValue.TextAlign = ContentAlignment.MiddleRight; speedValue.ForeColor = Color.FromArgb(70, 220, 240); speedValue.SetBounds(1450, 2, 90, 28);
         AccentTrackBar transitionSpeed = new() { Minimum = 1, Maximum = 100, Value = _settings.TransitionSpeed, TickFrequency = 10, Accent = Color.FromArgb(70, 220, 240) };
-        transitionSpeed.SetBounds(790, 48, 750, 52);
-        Label speedHelp = MakeLabel("Lower = slower and softer.\nHigher = faster response.", 10.5f, FontStyle.Regular); speedHelp.SetBounds(790, 108, 760, 54);
+        transitionSpeed.SetBounds(790, 32, 750, 46);
+        Label speedHelp = MakeLabel("Lower = slower and softer  •  Higher = faster response.", 10.5f, FontStyle.Regular); speedHelp.SetBounds(790, 82, 760, 32);
         transitionSpeed.ValueChanged += (_, _) => { _settings.TransitionSpeed = transitionSpeed.Value; speedValue.Text = transitionSpeed.Value + "%"; SaveSettings(); };
         bindings.Controls.AddRange(new Control[] { speedLabel, speedValue, transitionSpeed, speedHelp });
         help.SetToolTip(_recenterBind, "Capture fresh button presses to replace the recenter combo. Buttons already held are ignored until released.");
-        help.SetToolTip(_activationBind, "Bind a combo to switch Neck Assist ON or OFF without using the mouse.");
+        help.SetToolTip(_activationBind, "Bind a combo to switch Neck Assistant ON or OFF without using the mouse.");
         help.SetToolTip(advancedBehavior, "Choose whether the Advanced binding toggles assistance with each press or works only while held.");
         help.SetToolTip(_simpleActivationBind, "Simple mode is active only while this keyboard, mouse, or HOTAS input is held.");
         help.SetToolTip(clearRecenter, "Remove the recenter binding."); help.SetToolTip(clearToggle, "Remove the ON/OFF binding.");
@@ -634,11 +640,16 @@ internal sealed class NeckAssistForm : Form
         overview.Controls.Add(pitchEnabled);
         void LayoutGraphs()
         {
-            pitchEnabled.SetBounds(420, 0, 300, 32);
+            // Place the up/down toggle after the active-state label so its text never overlaps.
+            pitchEnabled.SetBounds(470, 0, 300, 38);
             int width = Math.Max(240, overview.Width - 24);
-            int graphHeight = Math.Max(125, (overview.Height - 122) / 2);
-            _curvePreview.SetBounds(12, 70, width, graphHeight);
-            _pitchPreview.SetBounds(12, 76 + graphHeight, width, graphHeight);
+            const int graphTop = 78;
+            const int graphGap = 8;
+            const int helpHeight = 42;
+            int graphHeight = Math.Max(70, (overview.Height - graphTop - graphGap - helpHeight - 8) / 2);
+            _curvePreview.SetBounds(12, graphTop, width, graphHeight);
+            _pitchPreview.SetBounds(12, graphTop + graphHeight + graphGap, width, graphHeight);
+            graphHelp.SetBounds(12, _pitchPreview.Bottom + 4, width, helpHeight);
         }
         overview.SizeChanged += (_, _) => LayoutGraphs();
         LayoutGraphs();
@@ -671,10 +682,10 @@ internal sealed class NeckAssistForm : Form
             SaveSettings();
         };
         CheckBox linkAxes = new() { Text = _settings.LinkAxes ? "Link axes: ON" : "Link axes: OFF", Appearance = Appearance.Button, AutoSize = false, Checked = _settings.LinkAxes, ForeColor = Color.White, BackColor = Color.FromArgb(35, 55, 60), TextAlign = ContentAlignment.MiddleCenter };
-        linkAxes.SetBounds(735, 0, 185, 32);
+        linkAxes.SetBounds(735, 0, 185, 38);
         overview.Controls.Add(linkAxes);
         CheckBox naturalRear = new() { Text = _settings.NaturalRearView ? "Rear-view boost: ON" : "Rear-view boost: OFF", Appearance = Appearance.Button, AutoSize = false, Checked = _settings.NaturalRearView, ForeColor = Color.White, BackColor = _settings.NaturalRearView ? Color.FromArgb(25, 95, 55) : Color.FromArgb(35, 55, 60), TextAlign = ContentAlignment.MiddleCenter };
-        naturalRear.SetBounds(930, 0, 185, 32); overview.Controls.Add(naturalRear);
+        naturalRear.SetBounds(930, 0, 185, 38); overview.Controls.Add(naturalRear);
         void ExplainMovementMode() => graphHelp.Text = naturalRear.Checked
             ? "REAR-VIEW BOOST: extra rotation is added early; after the boost, your head and view continue together at 1:1."
             : "STANDARD: extra rotation increases throughout the turn. Drag yellow/orange/green markers or use the matching sliders.";
@@ -686,17 +697,17 @@ internal sealed class NeckAssistForm : Form
         RadioButton normalMode = new() { Text = "ADVANCED", Appearance = Appearance.Button, Checked = _settings.MovementMode == "Advanced", AutoSize = false, ForeColor = Color.White, TextAlign = ContentAlignment.MiddleCenter, BackColor = Color.FromArgb(35, 55, 60) };
         RadioButton pressMode = new() { Text = "SIMPLE", Appearance = Appearance.Button, Checked = _settings.MovementMode == "Simple", AutoSize = false, ForeColor = Color.White, TextAlign = ContentAlignment.MiddleCenter, BackColor = Color.FromArgb(35, 55, 60) };
         // Keep all three controls inside the 1625px design canvas, even at the normal minimum window width.
-        pressMode.SetBounds(1125, 0, 125, 32);
-        normalMode.SetBounds(1260, 0, 125, 32);
+        pressMode.SetBounds(1125, 0, 125, 38);
+        normalMode.SetBounds(1260, 0, 125, 38);
         overview.Controls.AddRange(new Control[] { pressMode, normalMode });
         Button restoreAdvancedDefaults = MakeButton("RESTORE DEFAULTS");
-        restoreAdvancedDefaults.SetBounds(1395, 0, 180, 32);
+        restoreAdvancedDefaults.SetBounds(1395, 0, 180, 38);
         overview.Controls.Add(restoreAdvancedDefaults);
-        Label pressOverview = MakeLabel("SIMPLE MODE\n\nHold your assigned input, then turn beyond the deadzone to look behind you.", 18, FontStyle.Bold);
+        Label pressOverview = MakeLabel("SIMPLE MODE  •  Hold the assigned input and turn beyond the deadzone to look behind you.", 14, FontStyle.Bold);
         pressOverview.TextAlign = ContentAlignment.MiddleCenter; pressOverview.ForeColor = Color.FromArgb(180, 225, 235); pressOverview.Visible = false; overview.Controls.Add(pressOverview);
         void LayoutPressOverview()
         {
-            pressOverview.SetBounds(80, 100, Math.Max(300, overview.ClientSize.Width - 160), Math.Max(180, overview.ClientSize.Height - 150));
+            pressOverview.SetBounds(40, 82, Math.Max(300, overview.ClientSize.Width - 80), 72);
             pressOverview.TextAlign = ContentAlignment.MiddleCenter;
         }
         void QueuePressOverviewLayout()
@@ -708,6 +719,14 @@ internal sealed class NeckAssistForm : Form
         {
             bool press = pressMode.Checked;
             _settings.MovementMode = press ? "Simple" : "Advanced";
+            // Simple mode does not need the graph-sized overview. Give that space to
+            // its controls and binding help so nothing is pushed below the window.
+            dashboard.RowStyles[0].SizeType = press ? SizeType.Absolute : SizeType.Percent;
+            dashboard.RowStyles[0].Height = press ? 180 : 100;
+            dashboard.RowStyles[1].SizeType = SizeType.Absolute;
+            dashboard.RowStyles[1].Height = press ? 220 : 220;
+            dashboard.RowStyles[2].SizeType = press ? SizeType.Percent : SizeType.Absolute;
+            dashboard.RowStyles[2].Height = press ? 100 : 140;
             _curvePreview.Visible = _pitchPreview.Visible = graphHelp.Visible = pitchEnabled.Visible = linkAxes.Visible = naturalRear.Visible = !press;
             compactSliders.Visible = !press; pressControls.Visible = press; pressOverview.Visible = press;
             restoreAdvancedDefaults.Visible = !press;
@@ -715,8 +734,19 @@ internal sealed class NeckAssistForm : Form
             toggleLabel.Visible = _activationBind.Visible = clearToggle.Visible = advancedBehavior.Visible = !press;
             simpleLabel.Visible = _simpleActivationBind.Visible = clearSimple.Visible = press;
             bindingHelp.Text = press
-                ? "Simple uses War Thunder's in-game recenter. Hold the assigned input and turn beyond the deadzone. Keyboard, mouse and HOTAS inputs are supported."
-                : "Advanced can Toggle with each press or remain active only while held. Recenter remains available.";
+                ? "Simple: hold its binding to look behind you. War Thunder's in-game recenter remains available."
+                : "Toggle: press once ON, again OFF. Recenter remains available.";
+            if (press)
+            {
+                simpleLabel.SetBounds(12, 8, 235, 36);
+                _simpleActivationBind.SetBounds(250, 4, 250, 38);
+                clearSimple.SetBounds(515, 4, 100, 38);
+                bindingHelp.SetBounds(12, 54, 710, 42);
+            }
+            else
+            {
+                bindingHelp.SetBounds(12, 94, 710, 32);
+            }
             LayoutPressOverview();
             if (press) QueuePressOverviewLayout();
             normalMode.BackColor = !press ? Color.FromArgb(25, 95, 55) : Color.FromArgb(35, 55, 60);
@@ -985,13 +1015,13 @@ internal sealed class NeckAssistForm : Form
         if (!string.IsNullOrWhiteSpace(_openXrBackend.RegistrationError))
             _backendStatus.Text = "OpenXR layer could not be enabled: " + _openXrBackend.RegistrationError;
         else if (!_settings.Enabled)
-            _backendStatus.Text = "Neck Assist is off.";
+            _backendStatus.Text = "Neck Assistant is off.";
         else if (connected)
             _backendStatus.Text = "Headset connected — adjustments apply live; no game restart is needed for slider changes.";
         else if (available)
-            _backendStatus.Text = "Layer enabled, but no headset movement is arriving. Start the VR game after enabling Neck Assist once.";
+            _backendStatus.Text = "Layer enabled, but no headset movement is arriving. Start the VR game after enabling Neck Assistant once.";
         else
-            _backendStatus.Text = _openXrBackend.FilesAvailable ? "Layer is installed but not registered. Toggle Neck Assist off and on once." : "Backend native component is missing from this build.";
+            _backendStatus.Text = _openXrBackend.FilesAvailable ? "Layer is installed but not registered. Toggle Neck Assistant off and on once." : "Backend native component is missing from this build.";
         _backendStatus.ForeColor = connected ? Color.FromArgb(110, 235, 125) : Color.FromArgb(255, 196, 80);
     }
 
@@ -1422,7 +1452,9 @@ internal sealed class HotasBindingDialog : Form
         _ignoredKeys.RemoveWhere(vk => (GetAsyncKeyState(vk) & 0x8000) == 0);
         for (int vk = 1; vk < 255; vk++)
         {
-            if ((GetAsyncKeyState(vk) & 0x8000) == 0 || _ignoredKeys.Contains(vk)) continue;
+            // Hidden Keybinds can inject a keyboard shortcut from a HOTAS button.
+            // Do not turn that synthetic shortcut into part of a Neck Assist binding.
+            if ((GetAsyncKeyState(vk) & 0x8000) == 0 || _ignoredKeys.Contains(vk) || SyntheticKeyGuard.IsSuppressed(vk)) continue;
             if (mouseKeys.Contains(vk))
             {
                 string mouse = vk switch { 1 => "Left", 2 => "Right", 4 => "Middle", 5 => "X1", 6 => "X2", _ => vk.ToString() };
@@ -1505,5 +1537,28 @@ internal sealed class HotasBindingDialog : Form
             if ((buttons & (1u << (buttonNumber - 1))) == 0) return false;
         }
         return true;
+    }
+}
+
+internal static class SyntheticKeyGuard
+{
+    private static readonly Dictionary<int, long> SuppressedUntil = new();
+    private static readonly object Sync = new();
+
+    public static void Suppress(int virtualKey, int milliseconds = 400)
+    {
+        long until = Environment.TickCount64 + milliseconds;
+        lock (Sync) SuppressedUntil[virtualKey] = until;
+    }
+
+    public static bool IsSuppressed(int virtualKey)
+    {
+        lock (Sync)
+        {
+            if (!SuppressedUntil.TryGetValue(virtualKey, out long until)) return false;
+            if (Environment.TickCount64 <= until) return true;
+            SuppressedUntil.Remove(virtualKey);
+            return false;
+        }
     }
 }

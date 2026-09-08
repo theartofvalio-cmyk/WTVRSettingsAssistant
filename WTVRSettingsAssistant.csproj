@@ -7,9 +7,9 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationIcon>Icon.ico</ApplicationIcon>
-    <Version>1.4.0</Version>
-    <AssemblyVersion>1.4.0.0</AssemblyVersion>
-    <FileVersion>1.4.0.0</FileVersion>
+    <Version>1.5.0</Version>
+    <AssemblyVersion>1.5.0.0</AssemblyVersion>
+    <FileVersion>1.5.0.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -49,6 +49,8 @@
     <None Remove="Assets\Next.png" />
     <None Remove="Assets\NextGray.png" />
     <None Remove="Assets\NeckAssist_Active.png" />
+    <None Remove="Assets\HiddenKeybinds-v3.png" />
+    <None Remove="Assets\KeyBindAssistant_Inactive_v2.png" />
     <None Remove="Assets\NvidiaProfileInspector.png" />
     <None Remove="Assets\Play_Off.png" />
     <None Remove="Assets\Play_On.png" />
@@ -81,9 +83,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Runtime user data must never be included in a build/update payload. -->
+    <Content Remove="Settings\**\*;GraphicSettings\**\*;ControlSettings\**\*" />
+    <None Remove="Settings\**\*;GraphicSettings\**\*;ControlSettings\**\*" />
     <Compile Remove="verification\**\*.cs" />
     <EmbeddedResource Include="Assets\NeckAssist.png" />
     <EmbeddedResource Include="Assets\NeckAssist_Active.png" />
+    <EmbeddedResource Include="Assets\HiddenKeybinds-v3.png" />
+    <EmbeddedResource Include="Assets\KeyBindAssistant_Inactive_v2.png" />
     <Content Include="Icon.ico" />
     <Content Include="ThirdParty\XRNeckSafer\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
