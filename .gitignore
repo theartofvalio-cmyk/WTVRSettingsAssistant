@@ -1,0 +1,40 @@
+# Visual Studio / .NET build output
+.vs/
+**/bin/
+**/obj/
+**/Debug/
+**/Release/
+**/x86/
+**/x64/
+**/win-x86/
+*.user
+*.rsuser
+*.suo
+*.csproj.user
+*.binlog
+
+# Local release/publish output
+artifacts/
+output/
+publish/
+artifacts-release.json
+*.zip
+*.7z
+*.rar
+*.nupkg
+*.snupkg
+
+# Temporary work files
+tmp_*
+tmp*/
+__pycache__/
+*.pyc
+*.log
+*.tmp
+
+# OS/editor noise
+Thumbs.db
+Desktop.ini
+.DS_Store
+.vscode/
+.idea/

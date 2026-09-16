@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <PlatformTarget>x86</PlatformTarget>
+    <Platforms>x86</Platforms>
+    <AssemblyName>VTrim</AssemblyName>
+    <RootNamespace>HOTASTrimUtility</RootNamespace>
+    <Product>VTrim - Virtual Trim for HOTAS &amp; Rudder Pedals</Product>
+    <Description>Virtual pitch, roll and rudder trim for HOTAS controllers and rudder pedals.</Description>
+    <Version>1.8.8</Version>
+    <AssemblyVersion>1.8.8.0</AssemblyVersion>
+    <FileVersion>1.8.8.0</FileVersion>
+    <ApplicationIcon>VTrim.ico</ApplicationIcon>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="LateralAssistController.cs" />
+    <Compile Include="ScrollPagePanel.cs" />
+    <Content Include="VTrim.ico" />
+    <Compile Include="Program.cs;VirtualOutput.cs;Form1.Embedded.cs;Form1.VirtualOutput.cs;Form1.cs;Form1.Instructor.cs;Form1.Curves.cs;InstructorController.cs;WarThunderTelemetry.cs;NativeVJoy.cs;AircraftIcons.cs;GameWindow.cs;VJoySetup.cs;StoreTrimController.cs;AxisResponse.cs" />
+    <PackageReference Include="Vortice.DirectInput" Version="3.8.3" />
+    <Content Include="Native/x86/vJoyInterface.dll">
+      <Link>vJoyInterface.dll</Link><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory><CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </Content>
+  </ItemGroup>
+  <Target Name="RemoveNativeVJoyCompileReference" AfterTargets="ResolvePackageAssets">
+    <ItemGroup>
+      <ResolvedCompileFileDefinitions Remove="@(ResolvedCompileFileDefinitions)"
+        Condition="'%(Filename)%(Extension)' == 'vJoyInterface.dll'" />
+    </ItemGroup>
+  </Target>
+</Project>

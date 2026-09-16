@@ -1,0 +1,11 @@
+VR Assistant v2.0.5 - Visual Studio project
+
+1. EXTRACT THE ENTIRE ZIP to a normal folder first.
+   Do not open the .sln while it is still inside the ZIP/archive preview.
+2. Open: VR_Assistant_v2.0.5.sln
+3. Select Release | x86
+4. Build Solution
+
+The solution expects these paths next to it:
+  WTAssistant\WTVRSettingsAssistant.csproj
+  Modules\VTrim\Integration\VTrim\VTrim.Embedded.csproj

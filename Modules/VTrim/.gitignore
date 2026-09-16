@@ -1,0 +1,13 @@
+.vs/
+**/bin/
+**/obj/
+artifacts/
+Profiles/
+**/*.settings.json
+*.pfx
+*.p12
+*.key
+*.cer
+*.sys
+*.cat
+*.pdb

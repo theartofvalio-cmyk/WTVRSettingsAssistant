@@ -1,0 +1,15 @@
+War Thunder VR Assistant 2.0
+
+Highlights
+- Restores bundled vJoy support using the signed vJoy 2.2.2.0 installer and official x86 vJoyInterface.dll.
+- Adds one-click VTrim setup: Set up / Connect installs vJoy when needed, configures Device 1, then connects VTrim output.
+- Adds vJoy uninstall from App Options. This removes the Windows vJoy driver only; Assistant settings and profiles stay in place.
+- Reworks Instructor for prop-plane profiles. Move the HOTAS, hold briefly, release toward center, and the app taps the game trim key once.
+- Adds a game trim key binding for Instructor. Bind the same keyboard key in War Thunder as a second Trim aircraft binding if your physical trim button is HOTAS-only.
+- Fixes KeyBind Assistant switch behavior so ON and OFF transitions can pulse the same virtual button, matching gear-style toggles.
+- Refreshes the dark grey UI with larger icon-only assistant cards, cleaner Monitor/VR cards, red Launch Game styling, and gold active outlines.
+- Adds an App Options language dropdown with an initial translated shell for common languages, including Bulgarian.
+- Preserves Settings, GraphicSettings, ControlSettings, Diagnostics, and NeckAssist folders during updates from older releases.
+
+Known validation limit
+- Automated tests do not press real hardware, inject keys into a live War Thunder flight, install/uninstall the Windows vJoy driver, or restart Windows. Those need final hardware testing on a user machine.

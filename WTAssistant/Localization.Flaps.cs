@@ -1,0 +1,98 @@
+namespace WTVRSettingsAssistant;
+
+internal static partial class AppText
+{
+    private static void AddFlapsTranslations()
+    {
+        var english = new Dictionary<string, string>
+        {
+            ["DetectedAircraft"] = "Live flap position", ["AircraftWaiting"] = "Waiting for fresh flight telemetry",
+            ["StageLayout"] = "Aircraft flap stages",
+            ["LayoutFull"] = "Raised > Combat > Takeoff > Landing (F-4S)",
+            ["LayoutNoCombat"] = "Raised > Takeoff > Landing (F-16)",
+            ["LayoutNoTakeoff"] = "Raised > Combat > Landing",
+            ["LayoutLanding"] = "Raised > Landing",
+            ["CombatUnavailable"] = "Combat unavailable: Raised requested",
+            ["LearnTitle"] = "Capture HOTAS flap positions",
+            ["PositionColumn"] = "Position", ["CaptureStatus"] = "Capture status", ["CapturedButtons"] = "Buttons held when captured",
+            ["NotCaptured"] = "Not captured", ["Captured"] = "Captured", ["Recapture"] = "Capture again",
+            ["UsePositions"] = "Use these positions", ["Released"] = "All buttons released",
+            ["CaptureStep"] = "Step {0} of 3: {1}",
+            ["CentreCaptureHelp"] = "Return the switch to CENTER and release both switch buttons. Then click Capture.",
+            ["EndCaptureHelp"] = "Move only this switch to the position above, leave it there, then click Capture.",
+            ["MorePositions"] = "Captured. Move the switch to the next requested position.",
+            ["CaptureReview"] = "All three positions captured. Select any row to capture it again, or use these positions.",
+            ["CaptureInvalid"] = "Positions do not match a three-way switch. Capture distinct UP and DOWN positions, with both buttons released at CENTER. Select a row to retry.",
+            ["CaptureDisconnected"] = "Controller disconnected. Reconnect it before capturing.",
+            ["LiveButtons"] = "Currently held buttons:",
+            ["CaptureComplete"] = "All three HOTAS positions captured. Save & Close to keep them. No aircraft calibration required.",
+            ["KeysSending"] = "Sending keyboard sequence", ["KeysReady"] = "Direct keyboard output ready",
+            ["Title"] = "Advanced Flaps", ["Setup"] = "Advanced Flaps settings",
+            ["PositionGuide"] = "DOWN: Landing. CENTER: Raised. Normal UP: Takeoff. Fast DOWN > CENTER > UP: Combat.",
+            ["Commands"] = "Positions & commands", ["Response"] = "Response & status",
+            ["RemoveNativeBinding"] = "Remove this physical switch's flap assignments in War Thunder. Bind the outputs below to the game's separate Flaps Up and Flaps Down commands. Normal switch actions are suspended only while Advanced Flaps is enabled.",
+            ["UpPosition"] = "Flaps Up", ["CentrePosition"] = "Raised (Center)", ["DownPosition"] = "Flaps Down",
+            ["CommandUp"] = "Flaps Up command", ["CommandDown"] = "Flaps Down command",
+            ["ThreePositions"] = "Requires exactly three distinct, non-overlapping physical positions. Assign one row to each position; neutral can use OFF conditions.",
+            ["Cooldown"] = "Minimum command interval (ms)", ["ChangeTimeout"] = "Movement confirmation timeout (ms)",
+            ["RetryInterval"] = "Ignored-command retry interval (ms)",
+            ["DecisionHelp"] = "Each selection sends three Flaps Up presses, then the Flaps Down presses for the selected aircraft layout. No telemetry or aircraft detection required. Held positions do not repeat. Combat requests stay Raised when unavailable.",
+            ["StageColumn"] = "Flap stage", ["Available"] = "Available", ["Percent"] = "Observed %", ["Capture"] = "Capture",
+            ["Keyboard"] = "Keyboard", ["Mouse"] = "Mouse", ["Bind"] = "Bind key",
+            ["Live"] = "Aircraft: {0}   Flaps: {1:0.##}%\n{2}", ["Stable"] = "Stable position",
+            ["Stage.Raised"] = "Raised", ["Stage.Combat"] = "First flap step", ["Stage.Takeoff"] = "Takeoff", ["Stage.Landing"] = "Full / landing flaps",
+            ["Waiting"] = "Waiting for flap telemetry", ["NoTelemetry"] = "Flap automation paused: telemetry missing, invalid or stale.",
+            ["InvalidSettings"] = "Check the three distinct position assignments, separate Up/Down outputs, and command timing. Only one Advanced Flaps switch may be active.",
+            ["OneController"] = "Disable Advanced Flaps on the other switch first. Only one controller can command the aircraft flaps.",
+            ["NotFocused"] = "Flap automation paused until War Thunder is the foreground window.",
+            ["Configuring"] = "Flap automation paused while the switch editor is open.",
+            ["Reached"] = "Requested flap position confirmed",
+            ["Moving"] = "Waiting for flap movement to settle",
+            ["Timeout"] = "Flap change not confirmed. Check bindings/telemetry, then move the switch to retry.",
+            ["WrongDirection"] = "Flaps moved in the wrong direction. Check Up/Down bindings, then move the switch to retry.",
+            ["OutputFailed"] = "Flap output failed. Check the virtual output and bindings, then move the switch to retry."
+        };
+        var french = new Dictionary<string, string>
+        {
+            ["LearnTitle"] = "Capturer les positions des volets HOTAS",
+            ["PositionColumn"] = "Position", ["CaptureStatus"] = "État de capture", ["CapturedButtons"] = "Boutons maintenus à la capture",
+            ["NotCaptured"] = "Non capturé", ["Captured"] = "Capturé", ["Recapture"] = "Capturer à nouveau",
+            ["UsePositions"] = "Utiliser ces positions", ["Released"] = "Tous les boutons relâchés",
+            ["CaptureStep"] = "Étape {0} sur 3 : {1}",
+            ["CentreCaptureHelp"] = "Ramenez l'interrupteur au CENTRE, les deux boutons relâchés. Cliquez ensuite sur Capturer.",
+            ["EndCaptureHelp"] = "Déplacez uniquement cet interrupteur vers la position indiquée, laissez-le en place, puis cliquez sur Capturer.",
+            ["MorePositions"] = "Capturé. Déplacez l'interrupteur vers la position suivante.",
+            ["CaptureReview"] = "Les trois positions sont capturées. Sélectionnez une ligne pour la recapturer, ou utilisez ces positions.",
+            ["CaptureInvalid"] = "Les positions ne correspondent pas à un interrupteur à trois positions. Capturez HAUT et BAS distinctement, avec les deux boutons relâchés au CENTRE. Sélectionnez une ligne pour réessayer.",
+            ["CaptureDisconnected"] = "Contrôleur déconnecté. Reconnectez-le avant la capture.",
+            ["LiveButtons"] = "Boutons actuellement maintenus :",
+            ["CaptureComplete"] = "Les trois positions HOTAS sont capturées. Enregistrez et fermez pour les conserver. Aucun calibrage par aéronef.",
+            ["Title"] = "Volets avancés", ["Setup"] = "Réglages des volets avancés",
+            ["PositionGuide"] = "DOWN: Landing. CENTER: Raised. Normal UP: Takeoff. Fast DOWN > CENTER > UP: Combat.",
+            ["Commands"] = "Positions et commandes", ["Response"] = "Réponse et état",
+            ["RemoveNativeBinding"] = "Supprimez les affectations de volets de cet interrupteur physique dans War Thunder. Affectez les sorties ci-dessous aux commandes distinctes de rentrée et de sortie des volets. Les actions normales de l'interrupteur sont suspendues uniquement quand les volets avancés sont activés.",
+            ["UpPosition"] = "Volets vers le haut", ["CentrePosition"] = "Rentrés (centre)", ["DownPosition"] = "Volets vers le bas",
+            ["CommandUp"] = "Commande de rentrée des volets", ["CommandDown"] = "Commande de sortie des volets",
+            ["ThreePositions"] = "Trois positions physiques distinctes, sans chevauchement, sont nécessaires. Affectez une ligne à chaque position ; le neutre peut utiliser des conditions OFF.",
+            ["Cooldown"] = "Intervalle minimal des commandes (ms)", ["ChangeTimeout"] = "Délai de confirmation du mouvement (ms)",
+            ["RetryInterval"] = "Intervalle de nouvel essai si ignoré (ms)",
+            ["DecisionHelp"] = "Each selection sends three Flaps Up presses, then the Flaps Down presses for the selected aircraft layout. No telemetry or aircraft detection required. Held positions do not repeat. Combat requests stay Raised when unavailable.",
+            ["StageColumn"] = "Cran de volets", ["Available"] = "Disponible", ["Percent"] = "% observé", ["Capture"] = "Capturer",
+            ["Keyboard"] = "Clavier", ["Mouse"] = "Souris", ["Bind"] = "Affecter une touche",
+            ["Live"] = "Aéronef : {0}   Volets : {1:0.##} %\n{2}", ["Stable"] = "Position stable",
+            ["Stage.Raised"] = "Rentrés", ["Stage.Combat"] = "Premier cran", ["Stage.Takeoff"] = "Décollage", ["Stage.Landing"] = "Volets complètement sortis",
+            ["Waiting"] = "En attente de télémétrie des volets", ["NoTelemetry"] = "Automatisation des volets en pause : télémétrie absente, invalide ou périmée.",
+            ["InvalidSettings"] = "Vérifiez les trois positions distinctes, les sorties séparées de rentrée/sortie et les délais des commandes. Un seul interrupteur de volets avancés peut être actif.",
+            ["OneController"] = "Désactivez d'abord les volets avancés sur l'autre interrupteur. Un seul contrôleur peut commander les volets.",
+            ["NotFocused"] = "Automatisation des volets en pause jusqu'au retour de War Thunder au premier plan.",
+            ["Configuring"] = "Automatisation des volets en pause pendant l'ouverture de l'éditeur d'interrupteur.",
+            ["Reached"] = "Position demandée confirmée",
+            ["Moving"] = "En attente de stabilisation des volets",
+            ["Timeout"] = "Changement de volets non confirmé. Vérifiez les affectations et la télémétrie, puis déplacez l'interrupteur pour réessayer.",
+            ["WrongDirection"] = "Les volets ont bougé dans le mauvais sens. Vérifiez les commandes de rentrée/sortie, puis déplacez l'interrupteur pour réessayer.",
+            ["OutputFailed"] = "Échec de sortie des volets. Vérifiez la sortie virtuelle et les affectations, puis déplacez l'interrupteur pour réessayer."
+        };
+        foreach (var entry in english) Texts["en"]["Flaps." + entry.Key] = entry.Value;
+        foreach (var entry in french) Texts["fr"]["Flaps." + entry.Key] = entry.Value;
+    }
+}
