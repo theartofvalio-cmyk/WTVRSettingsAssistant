@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -53,7 +54,16 @@ internal sealed class WarThunderWikiAircraftProvider : IAircraftDataProvider
                 string role = roster == "helicopters" ? "Helicopter" : row[7][0][1].GetString() ?? "Aircraft";
                 // Use only icon URLs actually present in the roster, never fabricated assets.
                 Match icon = Regex.Match(page, @"https://static\.encyclopedia\.warthunder\.com/slots/" + Regex.Escape(id) + @"\.png", RegexOptions.None, TimeSpan.FromSeconds(1));
-                all[id] = new(id, name, row[2].GetString() ?? "", role, br, icon.Success ? icon.Value : null,
+                string nation = row[2].GetString() ?? "";
+                string? countryBackground = Regex.IsMatch(nation, @"^[a-zA-Z0-9_-]+$")
+                    ? $"https://static.encyclopedia.warthunder.com/unit_tooltip/country_{nation}.png" : null;
+                // Detail pages use /images/{id}.png for the large side-view aircraft art
+                // shown in the Wiki hero. It is fetched lazily only when an aircraft
+                // editor is opened; if a rare vehicle lacks it, the editor falls back
+                // to the normal roster/slot icon.
+                string heroUrl = $"https://static.encyclopedia.warthunder.com/images/{id}.png";
+                all[id] = new(id, name, nation, role, br, icon.Success ? icon.Value : null,
+                    BackgroundUrl: countryBackground, FrameUrl: heroUrl,
                     SearchAliases: new[] { AircraftSearchService.Normalize(name) }, IsPremium: row[5].GetInt32() == 1,
                     FlightCategory: roster == "helicopters" ? "Helicopter" : row[6].EnumerateArray().Any(t => t.GetInt32() is 8 or 19) ? "Jet Plane" : "Prop Plane");
                 count++;
@@ -87,7 +97,9 @@ internal sealed class AircraftDatabaseService
     private readonly IAircraftDataProvider _provider;
     private readonly SemaphoreSlim _refresh = new(1);
     private AircraftInfo[] _items = [];
+    private HashSet<string> _changedIconIds = new(StringComparer.Ordinal);
     public IReadOnlyList<AircraftInfo> Items => _items;
+    public IReadOnlySet<string> ChangedIconIds => _changedIconIds;
     public event Action? Changed;
     public string? LastError { get; private set; }
     internal static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true };
@@ -97,6 +109,19 @@ internal sealed class AircraftDatabaseService
         .Select(type => new AircraftInfo("universal-" + type.Replace(" ", "-").ToLowerInvariant(), "Universal " + type,
             "", type, new(), null, FlightCategory: type)).ToArray();
     public AircraftInfo? GetById(string? id) => _items.Concat(UniversalAircraft).FirstOrDefault(a => a.Id == id);
+    // Telemetry can create a profile before the Wiki index has loaded. Such a
+    // profile has no AircraftId yet, but its detection key is the Wiki ID.
+    public AircraftInfo? ResolveProfile(string? aircraftId, string? detectedKey)
+    {
+        AircraftInfo? byId = GetById(aircraftId);
+        if (byId is not null || string.IsNullOrWhiteSpace(detectedKey)) return byId;
+        string key = AircraftSearchService.Normalize(AircraftSearchService.CleanName(detectedKey));
+        AircraftInfo[] matches = _items.Where(a =>
+            AircraftSearchService.Normalize(a.Id) == key ||
+            AircraftSearchService.Normalize(a.DisplayName) == key ||
+            (a.SearchAliases?.Any(alias => AircraftSearchService.Normalize(alias) == key) ?? false)).ToArray();
+        return matches.Length == 1 ? matches[0] : null;
+    }
     public async Task InitializeAsync(CancellationToken token)
     {
         try
@@ -120,6 +145,10 @@ internal sealed class AircraftDatabaseService
             var items = (await _provider.FetchAsync(token)).ToArray(); Validate(items);
             if (_items.Length > 0 && items.Length < _items.Length * 0.8)
                 throw new InvalidDataException("Incomplete roster; keeping the previous aircraft cache.");
+            var oldById = _items.ToDictionary(a => a.Id, StringComparer.Ordinal);
+            _changedIconIds = items.Where(a => !oldById.TryGetValue(a.Id, out AircraftInfo? old) ||
+                    !string.Equals(old.IconUrl, a.IconUrl, StringComparison.Ordinal))
+                .Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
             string json = JsonSerializer.Serialize(items, JsonOptions);
             string hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json)));
             string current = JsonSerializer.Serialize(_items, JsonOptions);
@@ -175,45 +204,241 @@ internal static class AircraftSearchService
     }
 }
 
+internal sealed record AircraftAssetStamp(string SourceUrl, string? ETag = null, DateTimeOffset? LastModified = null);
+
 internal sealed class AircraftAssetCache
 {
     private readonly string _root;
     private readonly HttpClient _http;
-    private readonly SemaphoreSlim _gate = new(1);
-    public AircraftAssetCache(string portableSettings, HttpClient http) { _root = Path.Combine(portableSettings, "Aircraft"); _http = http; }
-    public Task<string?> GetIconAsync(AircraftInfo aircraft, CancellationToken token) => GetAsync(aircraft.Id, "Icons", aircraft.IconUrl, token);
-    public Task<string?> GetBackgroundAsync(AircraftInfo aircraft, CancellationToken token) => GetAsync(aircraft.Id, "Backgrounds", aircraft.BackgroundUrl, token);
-    public Task<string?> GetFrameAsync(AircraftInfo aircraft, CancellationToken token) => GetAsync(aircraft.Id, "Frames", aircraft.FrameUrl, token);
+    private readonly SemaphoreSlim _downloadGate = new(4, 4);
+    private readonly object _refreshLock = new();
+    private readonly HashSet<string> _refreshing = new(StringComparer.OrdinalIgnoreCase);
+
+    public AircraftAssetCache(string portableSettings, HttpClient http)
+    {
+        _root = Path.Combine(portableSettings, "Aircraft");
+        _http = http;
+    }
+
+    // Profile cards intentionally use the roster/slot image again. This is the
+    // stable path used before 2.2.4: once downloaded, the icon is read directly
+    // from Settings/Aircraft/Icons and does not depend on the network to render.
+    public Task<string?> GetIconAsync(AircraftInfo aircraft, CancellationToken token) =>
+        GetAsync(aircraft.Id, "Icons",
+            aircraft.IconUrl ?? $"https://static.encyclopedia.warthunder.com/slots/{aircraft.Id}.png", token);
+
+    public Task<string?> GetBackgroundAsync(AircraftInfo aircraft, CancellationToken token) =>
+        GetAsync(aircraft.Id, "Backgrounds", aircraft.BackgroundUrl, token);
+
+    public Task<string?> GetFrameAsync(AircraftInfo aircraft, CancellationToken token) =>
+        GetAsync(aircraft.Id, "Frames",
+            aircraft.FrameUrl ?? $"https://static.encyclopedia.warthunder.com/images/{aircraft.Id}.png", token);
+
+    // Called after the Wiki aircraft index refreshes. Existing cached icons are
+    // not downloaded again. Only missing/new aircraft, corrupt cache entries, or
+    // entries whose Wiki source URL changed are refreshed.
+    public async Task SynchronizeIconsAsync(IEnumerable<AircraftInfo> aircraft, IReadOnlySet<string>? changedIconIds,
+        CancellationToken token)
+    {
+        foreach (AircraftInfo item in aircraft)
+        {
+            token.ThrowIfCancellationRequested();
+            if (item.Id.StartsWith("universal-", StringComparison.Ordinal)) continue;
+            try
+            {
+                if (changedIconIds?.Contains(item.Id) == true)
+                    await RefreshIconAsync(item, token);
+                else
+                    await GetIconAsync(item, token);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) when (ex is IOException or HttpRequestException or ArgumentException or UnauthorizedAccessException) { }
+        }
+    }
+
+    private async Task<string?> RefreshIconAsync(AircraftInfo aircraft, CancellationToken token)
+    {
+        string? url = aircraft.IconUrl ?? $"https://static.encyclopedia.warthunder.com/slots/{aircraft.Id}.png";
+        if (!Regex.IsMatch(aircraft.Id, @"^[a-zA-Z0-9_-]+$") || !TryGetTrustedUri(url, out Uri uri)) return null;
+        string directory = Path.Combine(_root, "Icons");
+        string path = Path.Combine(directory, aircraft.Id + ".png");
+        string stampPath = Path.Combine(directory, aircraft.Id + ".asset.json");
+        return await DownloadAssetAsync(aircraft.Id, path, stampPath, uri, ReadStamp(stampPath), token, forceRefresh: true);
+    }
+
     private async Task<string?> GetAsync(string id, string kind, string? url, CancellationToken token)
     {
         if (!Regex.IsMatch(id, @"^[a-zA-Z0-9_-]+$")) return null;
-        await _gate.WaitAsync(token);
+        if (!TryGetTrustedUri(url, out Uri uri)) return null;
+
+        string directory = Path.Combine(_root, kind);
+        string path = Path.Combine(directory, id + ".png");
+        string stampPath = Path.Combine(directory, id + ".asset.json");
+
+        // Cache lookup happens BEFORE the download semaphore. This is important:
+        // hundreds of background Wiki downloads can never delay an already-cached
+        // aircraft icon from appearing in the profile UI.
+        if (TryValidateImage(path))
+        {
+            AircraftAssetStamp? stamp = ReadStamp(stampPath);
+            if (stamp is null)
+            {
+                // Migrate caches created by older WT Assistant versions without
+                // redownloading them.
+                ScheduleStampWrite(stampPath, new(uri.AbsoluteUri));
+            }
+            else if (!string.Equals(stamp.SourceUrl, uri.AbsoluteUri, StringComparison.Ordinal))
+            {
+                // The Wiki now points this aircraft at different artwork. Keep the
+                // old local image visible immediately and refresh it in background.
+                ScheduleRefresh(id, path, stampPath, uri, stamp, token);
+            }
+            return path;
+        }
+
+        // Delete a corrupt local entry and obtain the current Wiki asset once.
+        TryDelete(path);
+        return await DownloadAssetAsync(id, path, stampPath, uri, null, token);
+    }
+
+    private void ScheduleRefresh(string id, string path, string stampPath, Uri uri,
+        AircraftAssetStamp? oldStamp, CancellationToken token)
+    {
+        string key = path;
+        lock (_refreshLock)
+        {
+            if (!_refreshing.Add(key)) return;
+        }
+        _ = RefreshInBackgroundAsync(key, id, path, stampPath, uri, oldStamp, token);
+    }
+
+    private async Task RefreshInBackgroundAsync(string key, string id, string path, string stampPath,
+        Uri uri, AircraftAssetStamp? oldStamp, CancellationToken token)
+    {
+        try { await DownloadAssetAsync(id, path, stampPath, uri, oldStamp, token); }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) when (ex is IOException or HttpRequestException or ArgumentException or
+            OutOfMemoryException or UnauthorizedAccessException or System.Runtime.InteropServices.ExternalException) { }
+        finally { lock (_refreshLock) _refreshing.Remove(key); }
+    }
+
+    private async Task<string?> DownloadAssetAsync(string id, string path, string stampPath, Uri uri,
+        AircraftAssetStamp? oldStamp, CancellationToken token, bool forceRefresh = false)
+    {
+        await _downloadGate.WaitAsync(token);
         try
         {
-            string path = Path.Combine(_root, kind, id + ".png");
-            if (File.Exists(path))
+            // Another request may have completed while we were waiting.
+            if (!forceRefresh && TryValidateImage(path))
             {
-                try { using var cached = Image.FromFile(path); return path; }
-                catch (Exception ex) when (ex is ArgumentException or OutOfMemoryException or IOException) { }
+                AircraftAssetStamp? current = ReadStamp(stampPath);
+                if (current is not null && string.Equals(current.SourceUrl, uri.AbsoluteUri, StringComparison.Ordinal))
+                    return path;
             }
-            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != "https" ||
-                uri.Host != "static.encyclopedia.warthunder.com") return null;
-            using var response = await _http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, token);
-            response.EnsureSuccessStatusCode();
-            if (response.Content.Headers.ContentLength > 8 * 1024 * 1024) return null;
-            await using var stream = await response.Content.ReadAsStreamAsync(token);
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+            if (oldStamp is not null)
+            {
+                if (!string.IsNullOrWhiteSpace(oldStamp.ETag) &&
+                    EntityTagHeaderValue.TryParse(oldStamp.ETag, out EntityTagHeaderValue? etag) && etag is not null)
+                    request.Headers.IfNoneMatch.Add(etag);
+                if (oldStamp.LastModified is { } modified) request.Headers.IfModifiedSince = modified;
+            }
+            using HttpResponseMessage response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+            if (response.StatusCode == HttpStatusCode.NotModified && TryValidateImage(path))
+            {
+                await WriteStampAsync(stampPath, oldStamp! with { SourceUrl = uri.AbsoluteUri }, token);
+                return path;
+            }
+            if (!response.IsSuccessStatusCode) return TryValidateImage(path) ? path : null;
+            if (response.Content.Headers.ContentLength > 8 * 1024 * 1024) return TryValidateImage(path) ? path : null;
+
+            await using Stream stream = await response.Content.ReadAsStreamAsync(token);
             using var memory = new MemoryStream();
-            byte[] buffer = new byte[8192]; int read;
+            byte[] buffer = new byte[8192];
+            int read;
             while ((read = await stream.ReadAsync(buffer, token)) > 0)
-            { if (memory.Length + read > 8 * 1024 * 1024) return null; memory.Write(buffer, 0, read); }
+            {
+                if (memory.Length + read > 8 * 1024 * 1024) return TryValidateImage(path) ? path : null;
+                memory.Write(buffer, 0, read);
+            }
             memory.Position = 0;
             using var image = Image.FromStream(memory, true, true);
-            if ((long)image.Width * image.Height > 16000000) return null;
+            if ((long)image.Width * image.Height > 16000000) return TryValidateImage(path) ? path : null;
+
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            image.Save(path + ".tmp", System.Drawing.Imaging.ImageFormat.Png);
-            File.Move(path + ".tmp", path, true); return path;
+            string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                image.Save(temporary, System.Drawing.Imaging.ImageFormat.Png);
+                File.Move(temporary, path, true);
+            }
+            finally { TryDelete(temporary); }
+
+            var stamp = new AircraftAssetStamp(uri.AbsoluteUri,
+                response.Headers.ETag?.ToString(), response.Content.Headers.LastModified);
+            await WriteStampAsync(stampPath, stamp, token);
+            return path;
         }
-        catch (Exception ex) when (ex is IOException or HttpRequestException or ArgumentException or OutOfMemoryException or OperationCanceledException or UnauthorizedAccessException or System.Runtime.InteropServices.ExternalException) { return null; }
-        finally { _gate.Release(); }
+        catch (Exception ex) when (ex is IOException or HttpRequestException or ArgumentException or OutOfMemoryException or
+            UnauthorizedAccessException or System.Runtime.InteropServices.ExternalException)
+        {
+            return TryValidateImage(path) ? path : null;
+        }
+        finally { _downloadGate.Release(); }
+    }
+
+    private static bool TryGetTrustedUri(string? url, out Uri uri)
+    {
+        uri = null!;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out Uri? parsed) || parsed is null || parsed.Scheme != "https" ||
+            parsed.Host != "static.encyclopedia.warthunder.com") return false;
+        uri = parsed;
+        return true;
+    }
+
+    private static bool TryValidateImage(string path)
+    {
+        if (!File.Exists(path)) return false;
+        try
+        {
+            using var image = Image.FromFile(path);
+            return image.Width > 0 && image.Height > 0;
+        }
+        catch (Exception ex) when (ex is IOException or ArgumentException or OutOfMemoryException) { return false; }
+    }
+
+    private static AircraftAssetStamp? ReadStamp(string path)
+    {
+        try
+        {
+            if (!File.Exists(path)) return null;
+            return JsonSerializer.Deserialize<AircraftAssetStamp>(File.ReadAllText(path), AircraftDatabaseService.JsonOptions);
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException) { return null; }
+    }
+
+    private static void ScheduleStampWrite(string path, AircraftAssetStamp stamp)
+    {
+        _ = Task.Run(async () =>
+        {
+            try { await WriteStampAsync(path, stamp, CancellationToken.None); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        });
+    }
+
+    private static async Task WriteStampAsync(string path, AircraftAssetStamp stamp, CancellationToken token)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        string temp = path + ".tmp";
+        await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(stamp, AircraftDatabaseService.JsonOptions), token);
+        File.Move(temp, path, true);
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 }

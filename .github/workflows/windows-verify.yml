@@ -1,0 +1,33 @@
+name: Windows verify
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ master, main ]
+  pull_request:
+
+jobs:
+  build-and-self-test:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      WTA_CI: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build, publish and run self-test
+        shell: cmd
+        run: Build.cmd
+
+      - name: Upload verified portable build
+        uses: actions/upload-artifact@v4
+        with:
+          name: WTAssistant-Windows-verified
+          path: Builds/WTAssistant/**
+          if-no-files-found: error

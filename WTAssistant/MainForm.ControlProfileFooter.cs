@@ -14,6 +14,8 @@ public partial class MainForm
         _desktopFooterButton = new FooterProfileButton { AccessibleName = "Desktop keybind profiles", Visible = false };
         _vrFooterButton = new FooterProfileButton { AccessibleName = "VR keybind profiles", Visible = false };
         _aviationHome?.AttachControlProfileSelectors(_desktopFooterButton, _vrFooterButton);
+        if (_aviationHome is not null)
+            _aviationHome.ControlProfileMenuRequested += isVr => ShowControlProfileMenuAtCursor(isVr ? AppliedMode.VR : AppliedMode.Monitor);
         _controlProfileTips = new ToolTip();
         _desktopFooterButton.Click += (_, _) => ShowControlProfileMenu(AppliedMode.Monitor, _desktopFooterButton);
         _vrFooterButton.Click += (_, _) => ShowControlProfileMenu(AppliedMode.VR, _vrFooterButton);
@@ -42,6 +44,9 @@ public partial class MainForm
         }
         Update(_desktopFooterButton, _desktopControlProfiles, _selectedDesktopControlProfileId, "Desktop");
         Update(_vrFooterButton, _vrControlProfiles, _selectedVrControlProfileId, "VR");
+        bool visible = _showHomeKeybinds && _mainPanel.Visible &&
+            _vtrimForm?.Visible != true && _neckAssistForm?.Visible != true && _hiddenKeybindsForm?.Visible != true;
+        _aviationHome?.SetControlProfileSelectorState(visible, _desktopFooterButton.Enabled, _vrFooterButton.Enabled);
     }
 
     private ContextMenuStrip CreateControlProfileMenu(AppliedMode mode)
@@ -70,6 +75,18 @@ public partial class MainForm
         menu.Size = new Size(menu.Items.Cast<ToolStripItem>().Select(i => i.Width).DefaultIfEmpty(200).Max() + 4,
             Math.Min(Screen.FromControl(this).WorkingArea.Height - 40, menu.Items.Cast<ToolStripItem>().Sum(i => i.Height) + 4));
         return menu;
+    }
+
+    private void ShowControlProfileMenuAtCursor(AppliedMode mode)
+    {
+        if (_aviationHome is null) return;
+        _controlProfileMenu?.Dispose();
+        _controlProfileMenu = CreateControlProfileMenu(mode);
+        if (_controlProfileMenu.Items.Count == 0) return;
+        Point location = _aviationHome.PointToClient(Cursor.Position);
+        location.X = Math.Clamp(location.X, 0, Math.Max(0, _aviationHome.ClientSize.Width - 8));
+        location.Y = Math.Clamp(location.Y + 4, 0, Math.Max(0, _aviationHome.ClientSize.Height - 8));
+        _controlProfileMenu.Show(_aviationHome, location, ToolStripDropDownDirection.BelowLeft);
     }
 
     private void ShowControlProfileMenu(AppliedMode mode, FooterProfileButton button)

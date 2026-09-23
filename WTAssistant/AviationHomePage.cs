@@ -1,31 +1,88 @@
 using System.ComponentModel;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+using System.Text;
+using System.Text.Json;
+using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.WinForms;
 
 namespace WTVRSettingsAssistant;
 
 internal sealed class AviationHomePage : UserControl
 {
     private readonly AlphaPictureBox _logo;
+    private WebView2? _webView;
+    private readonly Panel _webLoadingCover;
+    private bool _webReady;
+    private string? _lastWebState;
+    private bool _webFallbackLocked;
+    private System.Windows.Forms.Timer? _webInitWatchdog;
+    private Control? _desktopProfileSelector;
+    private Control? _vrProfileSelector;
+    private bool _profileSelectorsVisible;
+    private bool _desktopProfileSelectorEnabled;
+    private bool _vrProfileSelectorEnabled;
+    public event Action<bool>? ControlProfileMenuRequested;
+    private string _languageCode = "en";
+    private bool _monitorActive;
+    private bool _vrActive;
+    private bool _neckEnabled;
+    private bool _keysEnabled;
+    private bool _vtrimEnabled;
+    private GameServerChannel _serverChannel;
+    private bool _canLaunch;
+    private bool _gameRunning;
+    private bool _launchBusy;
+    private bool _updateAvailable;
+    private Version? _liveVersion;
+    private Version? _testVersion;
+
     public void AttachControlProfileSelectors(Control desktop, Control vr)
     {
-        _monitor.Controls.Add(desktop);
-        _vr.Controls.Add(vr);
-        void ArrangeSelector(Control card, Control selector)
+        _desktopProfileSelector = desktop;
+        _vrProfileSelector = vr;
+        AttachProfileSelectorsToSurface();
+        Arrange();
+    }
+
+    private void AttachProfileSelectorsToSurface()
+    {
+        if (_desktopProfileSelector is null || _vrProfileSelector is null) return;
+        // Keep the WinForms selectors parented to the native cards only. A native
+        // transparent control cannot reveal a WebView2 HWND beneath it; doing so
+        // produced the dark square seen around the arrows. Enhanced Home draws its
+        // arrows inside HTML instead.
+        if (!ReferenceEquals(_desktopProfileSelector.Parent, _monitor)) _monitor.Controls.Add(_desktopProfileSelector);
+        if (!ReferenceEquals(_vrProfileSelector.Parent, _vr)) _vr.Controls.Add(_vrProfileSelector);
+        _desktopProfileSelector.Visible = !_webReady && _profileSelectorsVisible;
+        _vrProfileSelector.Visible = !_webReady && _profileSelectorsVisible;
+        PushWebState();
+    }
+
+    public void SetControlProfileSelectorState(bool visible, bool desktopEnabled, bool vrEnabled)
+    {
+        _profileSelectorsVisible = visible;
+        _desktopProfileSelectorEnabled = desktopEnabled;
+        _vrProfileSelectorEnabled = vrEnabled;
+        if (_desktopProfileSelector is not null)
         {
-            int size = Math.Clamp(card.Height / 5, 30, 56);
-            selector.SetBounds(card.Width - size - 12, card.Height - size - 12, size, size);
+            _desktopProfileSelector.Enabled = desktopEnabled;
+            _desktopProfileSelector.Visible = !_webReady && visible;
         }
-        _monitor.SizeChanged += (_, _) => ArrangeSelector(_monitor, desktop);
-        _vr.SizeChanged += (_, _) => ArrangeSelector(_vr, vr);
-        ArrangeSelector(_monitor, desktop);
-        ArrangeSelector(_vr, vr);
+        if (_vrProfileSelector is not null)
+        {
+            _vrProfileSelector.Enabled = vrEnabled;
+            _vrProfileSelector.Visible = !_webReady && visible;
+        }
+        PushWebState();
     }
     private Control? _aircraftProfiles;
     private bool _showAircraftProfiles = true;
     public void SetAircraftProfilesVisible(bool visible)
     {
+        if (_showAircraftProfiles == visible) return;
         _showAircraftProfiles = visible;
-        if (_aircraftProfiles is not null) _aircraftProfiles.Visible = visible && _logo.Visible;
+        Arrange();
     }
     public void SetAircraftProfiles(Control browser)
     {
@@ -34,6 +91,8 @@ internal sealed class AviationHomePage : UserControl
         browser.Dock = DockStyle.None;
         Controls.Add(browser);
         Arrange();
+        if (_webReady) browser.BringToFront();
+        else if (_webLoadingCover.Visible) _webLoadingCover.BringToFront();
     }
     private readonly Label _playMode;
     private readonly AviationActionCard _monitor;
@@ -77,9 +136,10 @@ internal sealed class AviationHomePage : UserControl
         {
             SizeMode = PictureBoxSizeMode.Zoom,
             BackColor = Color.Transparent,
-            Cursor = Cursors.Hand
+            Cursor = Cursors.Default
         };
-        _logo.Click += (_, _) => logoClick();
+        // The Home logo is decorative; no hover text or secret-action target.
+        _logo.TabStop = false;
 
         Image? monitorImage = LoadOptionalAsset("Home_Monitor_New.png");
         Image? vrImage = LoadOptionalAsset("Home_VR_New.png");
@@ -115,51 +175,662 @@ internal sealed class AviationHomePage : UserControl
         _links.Controls.Add(new AviationLinkButton("Buy me a Beer!", "beer", support), 2, 0);
 
         Controls.AddRange([_playMode, _monitor, _vr, _neck, _keys, _trim, _server, _launch, _links, _logo]);
+
+        _webLoadingCover = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = IllustratedTheme.Background,
+            Visible = ShouldUseEnhancedWebUi()
+        };
+        Label loading = new()
+        {
+            Dock = DockStyle.Fill,
+            Text = "WT VR ASSISTANT",
+            TextAlign = ContentAlignment.MiddleCenter,
+            ForeColor = IllustratedTheme.Muted,
+            BackColor = Color.Transparent,
+            Font = new Font("Segoe UI", 14f, FontStyle.Bold),
+            AutoSize = false
+        };
+        _webLoadingCover.Controls.Add(loading);
+        Controls.Add(_webLoadingCover);
+        if (_webLoadingCover.Visible)
+        {
+            SetNativeSurfaceVisible(false);
+            _webLoadingCover.BringToFront();
+        }
+
         Resize += (_, _) => { Arrange(); Invalidate(); };
-        HandleCreated += (_, _) => BeginInvoke((Action)Arrange);
+        HandleCreated += async (_, _) =>
+        {
+            BeginInvoke((Action)Arrange);
+            if (!ShouldUseEnhancedWebUi()) return;
+            await InitializeWebSurfaceAsync(
+                monitor, vr, openNeck, toggleNeck, openKeys, toggleKeys,
+                serverChanged, refreshServers, launch, logoClick, discord, youtube, support,
+                openTrim ?? (() => { }), toggleTrim ?? (() => { }));
+        };
     }
 
-    public void SetState(bool monitorActive, bool vrActive, bool neckEnabled, bool keysEnabled, GameServerChannel server, bool canLaunch, bool gameRunning)
+    public void SetState(bool monitorActive, bool vrActive, bool neckEnabled, bool keysEnabled, GameServerChannel server, bool canLaunch, bool gameRunning, bool launchBusy)
     {
+        _monitorActive = monitorActive;
+        _vrActive = vrActive;
+        _neckEnabled = neckEnabled;
+        _keysEnabled = keysEnabled;
+        _serverChannel = server;
+        _canLaunch = canLaunch;
+        _gameRunning = gameRunning;
+        _launchBusy = launchBusy;
+
         _monitor.Active = monitorActive;
         _vr.Active = vrActive;
         _neck.Active = neckEnabled;
         _keys.Active = keysEnabled;
         _server.Selected = server;
         _launch.GameRunning = gameRunning;
-        _launch.CanLaunch = canLaunch && !gameRunning;
+        _launch.CanLaunch = canLaunch && !gameRunning && !launchBusy;
+        PushWebState();
     }
 
-    public void SetVTrimState(bool enabled) => _trim.Active = enabled;
-    public void SetGameUpdateAvailable(bool updateAvailable) => _launch.UpdateAvailable = updateAvailable;
-    public void SetServerVersions(Version? live, Version? test) => _server.SetVersions(live, test);
+    public void SetVTrimState(bool enabled)
+    {
+        if (_vtrimEnabled == enabled) return;
+        _vtrimEnabled = enabled;
+        _trim.Active = enabled;
+        PushWebState();
+    }
+
+    public void SetGameUpdateAvailable(bool updateAvailable)
+    {
+        _updateAvailable = updateAvailable;
+        _launch.UpdateAvailable = updateAvailable;
+        PushWebState();
+    }
+
+    public void SetServerVersions(Version? live, Version? test)
+    {
+        _liveVersion = live;
+        _testVersion = test;
+        _server.SetVersions(live, test);
+        PushWebState();
+    }
     public void SetServerStatuses(ServerSignal live, ServerSignal test) { /* Server availability indicators intentionally removed in v2.0. */ }
 
     public void SetLanguage(string languageCode)
     {
-        _playMode.Text = AppText.T(languageCode, "Home.ModeHeading");
+        string normalized = AppText.Normalize(languageCode);
+        bool languageChanged = normalized != _languageCode;
+        _languageCode = normalized;
+        _playMode.Text = AppText.T(_languageCode, "Home.ModeHeading");
         _server.SetLanguage(languageCode);
         _launch.SetLabels(
-            AppText.T(languageCode, "Home.LaunchAction"),
-            AppText.T(languageCode, "Home.UpdateAction"),
-            AppText.T(languageCode, "Home.RunningAction"));
-        _monitor.Text = AppText.T(languageCode, "Home.Monitor");
+            AppText.T(_languageCode, "Home.LaunchAction"),
+            AppText.T(_languageCode, "Home.UpdateAction"),
+            AppText.T(_languageCode, "Home.RunningAction"));
+        _monitor.Text = AppText.T(_languageCode, "Home.Monitor");
         _monitor.AccessibleName = _monitor.Text;
-        _vr.Text = AppText.T(languageCode, "Home.VR");
+        _vr.Text = AppText.T(_languageCode, "Home.VR");
         _vr.AccessibleName = _vr.Text;
-        SetCardText(_neck, AppText.T(languageCode, "Nav.Neck"));
-        SetCardText(_keys, AppText.T(languageCode, "Nav.Keybind"));
-        SetCardText(_trim, AppText.T(languageCode, "Nav.VTrim"));
-        _neck.SetStatusText(AppText.T(languageCode, "Common.On"), AppText.T(languageCode, "Common.Off"));
-        _keys.SetStatusText(AppText.T(languageCode, "Common.On"), AppText.T(languageCode, "Common.Off"));
-        _trim.SetStatusText(AppText.T(languageCode, "Common.On"), AppText.T(languageCode, "Common.Off"));
+        SetCardText(_neck, AppText.T(_languageCode, "Nav.Neck"));
+        SetCardText(_keys, AppText.T(_languageCode, "Nav.Keybind"));
+        SetCardText(_trim, AppText.T(_languageCode, "Nav.VTrim"));
+        _neck.SetStatusText(AppText.T(_languageCode, "Common.On"), AppText.T(_languageCode, "Common.Off"));
+        _keys.SetStatusText(AppText.T(_languageCode, "Common.On"), AppText.T(_languageCode, "Common.Off"));
+        _trim.SetStatusText(AppText.T(_languageCode, "Common.On"), AppText.T(_languageCode, "Common.Off"));
         if (_links.Controls.Count >= 3)
         {
-            _links.Controls[0].Text = AppText.T(languageCode, "Home.Discord");
-            _links.Controls[1].Text = AppText.T(languageCode, "Home.YouTube");
-            _links.Controls[2].Text = AppText.T(languageCode, "Home.Support");
+            _links.Controls[0].Text = AppText.T(_languageCode, "Home.Discord");
+            _links.Controls[1].Text = AppText.T(_languageCode, "Home.YouTube");
+            _links.Controls[2].Text = AppText.T(_languageCode, "Home.Support");
         }
         Invalidate();
+        if (_webReady && languageChanged) PushWebState();
+    }
+
+    private static bool ShouldUseEnhancedWebUi()
+    {
+        try
+        {
+            if (Environment.GetCommandLineArgs().Any(arg => arg.Equals("--classic-ui", StringComparison.OrdinalIgnoreCase)))
+                return false;
+            string flag = Path.Combine(AppContext.BaseDirectory, "Settings", "classic_ui.flag");
+            return !File.Exists(flag);
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private async Task InitializeWebSurfaceAsync(
+        Action monitor,
+        Action vr,
+        Action openNeck,
+        Action toggleNeck,
+        Action openKeys,
+        Action toggleKeys,
+        Action<GameServerChannel> serverChanged,
+        Action refreshServers,
+        Action launch,
+        Action logoClick,
+        Action discord,
+        Action youtube,
+        Action support,
+        Action openTrim,
+        Action toggleTrim)
+    {
+        if (_webView is not null || IsDisposed) return;
+        _webFallbackLocked = false;
+
+        WebView2 view = new()
+        {
+            Dock = DockStyle.Fill,
+            Visible = false,
+            BackColor = IllustratedTheme.Background,
+            TabStop = true
+        };
+        _webView = view;
+        Controls.Add(view);
+
+        try
+        {
+            // Never leave the Home page hidden behind the startup cover forever.
+            // If WebView2 initialization or first navigation stalls, fall back to
+            // the proven native dashboard instead of presenting an empty Home.
+            _webInitWatchdog?.Stop();
+            _webInitWatchdog?.Dispose();
+            _webInitWatchdog = new System.Windows.Forms.Timer { Interval = 6000 };
+            _webInitWatchdog.Tick += (_, _) =>
+            {
+                _webInitWatchdog?.Stop();
+                if (!_webReady && !IsDisposed) SwitchToNativeFallback();
+            };
+            _webInitWatchdog.Start();
+
+            string userData = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "WTVRSettingsAssistant",
+                "WebView2");
+            Directory.CreateDirectory(userData);
+            CoreWebView2Environment environment = await CoreWebView2Environment.CreateAsync(null, userData);
+            await view.EnsureCoreWebView2Async(environment);
+            string webAssetFolder = PrepareWebAssetFolder();
+            view.CoreWebView2.SetVirtualHostNameToFolderMapping(
+                "wtassets.local",
+                webAssetFolder,
+                CoreWebView2HostResourceAccessKind.Allow);
+
+            CoreWebView2Settings settings = view.CoreWebView2.Settings;
+            settings.AreDefaultContextMenusEnabled = false;
+            settings.AreDevToolsEnabled = false;
+            settings.IsStatusBarEnabled = false;
+            settings.IsZoomControlEnabled = false;
+            settings.AreBrowserAcceleratorKeysEnabled = false;
+            settings.AreDefaultScriptDialogsEnabled = false;
+            settings.AreHostObjectsAllowed = false;
+
+            view.CoreWebView2.ProcessFailed += (_, _) =>
+            {
+                if (IsDisposed) return;
+                try { BeginInvoke((Action)SwitchToNativeFallback); } catch { }
+            };
+
+            view.CoreWebView2.WebMessageReceived += (_, e) =>
+            {
+                string message;
+                try { message = e.TryGetWebMessageAsString(); }
+                catch { return; }
+
+                switch (message)
+                {
+                    case "monitor": monitor(); break;
+                    case "vr": vr(); break;
+                    case "neck": toggleNeck(); break;
+                    case "keybind": toggleKeys(); break;
+                    case "vtrim": toggleTrim(); break;
+                    case "server-live": serverChanged(GameServerChannel.Live); break;
+                    case "server-test": serverChanged(GameServerChannel.Test); break;
+                    case "refresh-servers": refreshServers(); break;
+                    case "launch": launch(); break;
+                    case "logo": logoClick(); break;
+                    case "discord": discord(); break;
+                    case "youtube": youtube(); break;
+                    case "support": support(); break;
+                    case "open-neck": openNeck(); break;
+                    case "open-keybind": openKeys(); break;
+                    case "open-vtrim": openTrim(); break;
+                    case "profile-monitor": ControlProfileMenuRequested?.Invoke(false); break;
+                    case "profile-vr": ControlProfileMenuRequested?.Invoke(true); break;
+                }
+            };
+
+            view.CoreWebView2.NavigationStarting += (_, e) =>
+            {
+                // Do not block the initial NavigateToString navigation. Once the
+                // dashboard is live, prevent clicks from navigating the embedded
+                // browser away from our app surface.
+                if (_webReady && !e.Uri.StartsWith("about:blank", StringComparison.OrdinalIgnoreCase))
+                    e.Cancel = true;
+            };
+            view.CoreWebView2.NewWindowRequested += (_, e) => e.Handled = true;
+
+            view.NavigationCompleted += (_, e) =>
+            {
+                if (IsDisposed || _webFallbackLocked) return;
+                if (!e.IsSuccess)
+                {
+                    SwitchToNativeFallback();
+                    return;
+                }
+                _webReady = true;
+                _lastWebState = null;
+                _webInitWatchdog?.Stop();
+                _webLoadingCover.Visible = false;
+                view.Visible = true;
+                view.BringToFront();
+                SetNativeSurfaceVisible(false);
+                AttachProfileSelectorsToSurface();
+                Arrange();
+                _aircraftProfiles?.BringToFront();
+                PushWebState();
+            };
+
+            view.NavigateToString(BuildWebHtml());
+        }
+        catch
+        {
+            _webInitWatchdog?.Stop();
+            try { view.Dispose(); } catch { }
+            _webView = null;
+            SwitchToNativeFallback();
+        }
+    }
+
+    private void SwitchToNativeFallback()
+    {
+        _webInitWatchdog?.Stop();
+        _webFallbackLocked = true;
+        _webReady = false;
+        _webLoadingCover.Visible = false;
+        if (_webView is not null) _webView.Visible = false;
+        SetNativeSurfaceVisible(true);
+        AttachProfileSelectorsToSurface();
+        Arrange();
+    }
+
+    private void SetNativeSurfaceVisible(bool visible)
+    {
+        _playMode.Visible = false;
+        _monitor.Visible = visible;
+        _vr.Visible = visible;
+        _neck.Visible = visible;
+        _keys.Visible = visible;
+        _trim.Visible = visible;
+        _server.Visible = visible;
+        _launch.Visible = visible;
+        _links.Visible = visible;
+        if (!visible) _logo.Visible = false;
+    }
+
+    private void ReloadWebUi()
+    {
+        if (_webView?.CoreWebView2 is null) return;
+        try { _webView.NavigateToString(BuildWebHtml()); } catch { }
+    }
+
+    private void PushWebState()
+    {
+        if (!_webReady || _webView?.CoreWebView2 is null) return;
+        string liveVersion = _liveVersion is null
+            ? AppText.T(_languageCode, "Home.Version").Replace("{0}", "...")
+            : string.Format(AppText.T(_languageCode, "Home.Version"), _liveVersion);
+        string testVersion = _testVersion is null
+            ? AppText.T(_languageCode, "Home.Version").Replace("{0}", "...")
+            : string.Format(AppText.T(_languageCode, "Home.Version"), _testVersion);
+
+        var state = new
+        {
+            monitor = _monitorActive,
+            vr = _vrActive,
+            neck = _neckEnabled,
+            keybind = _keysEnabled,
+            vtrim = _vtrimEnabled,
+            server = _serverChannel == GameServerChannel.Test ? "test" : "live",
+            canLaunch = _canLaunch,
+            running = _gameRunning,
+            busy = _launchBusy,
+            update = _updateAvailable,
+            liveVersion,
+            testVersion,
+            profiles = new
+            {
+                visible = _profileSelectorsVisible,
+                monitorEnabled = _desktopProfileSelectorEnabled,
+                vrEnabled = _vrProfileSelectorEnabled
+            },
+            labels = new
+            {
+                live = AppText.T(_languageCode, "Home.LiveServer"),
+                test = AppText.T(_languageCode, "Home.TestServer"),
+                monitor = AppText.T(_languageCode, "Home.Monitor"),
+                vr = AppText.T(_languageCode, "Home.VR"),
+                neck = AppText.T(_languageCode, "Nav.Neck"),
+                keybind = AppText.T(_languageCode, "Nav.Keybind"),
+                vtrim = AppText.T(_languageCode, "Nav.VTrim"),
+                on = AppText.T(_languageCode, "Common.On"),
+                off = AppText.T(_languageCode, "Common.Off"),
+                launch = AppText.T(_languageCode, "Home.LaunchAction"),
+                update = AppText.T(_languageCode, "Home.UpdateAction"),
+                running = AppText.T(_languageCode, "Home.RunningAction"),
+                discord = AppText.T(_languageCode, "Home.Discord"),
+                youtube = AppText.T(_languageCode, "Home.YouTube"),
+                support = AppText.T(_languageCode, "Home.Support")
+            }
+        };
+
+        string payload = JsonSerializer.Serialize(state);
+        if (payload == _lastWebState) return;
+        SendWebStateAsync(payload);
+    }
+
+    private async void SendWebStateAsync(string payload)
+    {
+        if (_webView?.CoreWebView2 is null) return;
+        _lastWebState = payload;
+        try { await _webView.CoreWebView2.ExecuteScriptAsync("window.wtApplyState(" + payload + ");"); }
+        catch { _lastWebState = null; }
+    }
+
+    private string BuildWebHtml()
+    {
+        const string assetRoot = "https://wtassets.local/";
+        string logo = assetRoot + "logo.png";
+        string monitor = assetRoot + "monitor.png";
+        string vr = assetRoot + "vr.png";
+        string neck = assetRoot + "neck.png";
+        string keybind = assetRoot + "keybind.png";
+        string trim = assetRoot + "vtrim.png";
+        string launchNormal = assetRoot + "launch-normal.png";
+        string launchUpdate = assetRoot + "launch-update.png";
+        string launchRunning = assetRoot + "launch-running.png";
+        string liveIcon = assetRoot + "live.png";
+        string liveActiveIcon = assetRoot + "live-active.png";
+        string testIcon = assetRoot + "test.png";
+        string testActiveIcon = assetRoot + "test-active.png";
+        string discordIcon = assetRoot + "discord.png";
+        string youtubeIcon = assetRoot + "youtube.png";
+        string supportIcon = assetRoot + "support.png";
+
+        static string Hex(Color c) => $"#{c.R:X2}{c.G:X2}{c.B:X2}";
+        string themeClass = AppThemeAssets.ActiveTheme.Equals("MiG29", StringComparison.OrdinalIgnoreCase) ? "mig" : "f16";
+
+        return $$"""
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<style>
+:root {
+  --bg: {{Hex(IllustratedTheme.Background)}};
+  --panel: {{Hex(IllustratedTheme.Panel)}};
+  --ink: {{Hex(IllustratedTheme.Ivory)}};
+  --accent: {{Hex(IllustratedTheme.Gold)}};
+  --muted: {{Hex(IllustratedTheme.Muted)}};
+  --edge: rgba(235,238,240,.20);
+}
+* { box-sizing:border-box; user-select:none; -webkit-user-drag:none; }
+html,body { width:100%; height:100%; margin:0; overflow:hidden; background:var(--bg); color:var(--ink); font-family:"Segoe UI",Arial,sans-serif; }
+body::before { content:""; position:fixed; inset:0; pointer-events:none; opacity:.035; background:radial-gradient(circle at 66% 34%,rgba(255,255,255,.10),transparent 44%); }
+#stage {
+  position:absolute; inset:0; min-width:0; min-height:0;
+  display:grid; grid-template-columns:minmax(380px,46%) minmax(0,54%);
+  gap:clamp(10px,1.15vw,20px); padding:clamp(8px,.85vw,16px);
+}
+#hero { min-width:0; min-height:0; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+#logo {
+  display:block; width:min(100%,840px); height:min(100%,840px); object-fit:contain; object-position:center;
+  pointer-events:none; cursor:default; image-rendering:auto;
+  filter:drop-shadow(0 8px 18px rgba(0,0,0,.28));
+}
+#right {
+  min-width:0; min-height:0; display:grid;
+  grid-template-rows:clamp(68px,9.7vh,92px) minmax(0,1fr) minmax(0,1.16fr) max-content clamp(38px,5.1vh,48px);
+  gap:clamp(8px,.9vh,14px);
+}
+#servers,#modes,#assistants,#links { min-width:0; min-height:0; display:grid; gap:clamp(8px,.72vw,12px); }
+#servers,#modes { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+#assistants,#links { grid-template-columns:repeat(3,minmax(0,1fr)); }
+.card {
+  position:relative; min-width:0; min-height:0; overflow:hidden;
+  background:linear-gradient(180deg,rgba(255,255,255,.018),rgba(0,0,0,.08)),var(--panel);
+  border:1px solid var(--edge); border-radius:4px; cursor:pointer;
+  transition:border-color .14s ease,box-shadow .14s ease,background .14s ease;
+}
+@keyframes enabledFlash {
+  0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 70%,transparent)}
+  48%{box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent),0 0 22px color-mix(in srgb,var(--accent) 34%,transparent)}
+  100%{box-shadow:0 0 0 0 transparent}
+}
+.card.flash { animation:enabledFlash .48s ease-out; }
+.card:hover { border-color:color-mix(in srgb,var(--accent) 66%,var(--edge)); box-shadow:0 7px 18px rgba(0,0,0,.20); }
+.card.active { border-color:var(--accent); box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 58%,transparent); background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 12%,var(--panel)),var(--panel)); }
+.card:focus-visible,.link:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.icon-card img { display:block; width:100%; height:100%; object-fit:contain; padding:clamp(7px,.72vw,12px); image-rendering:auto; backface-visibility:hidden; }
+.profileArrow {
+  position:absolute; right:clamp(10px,.75vw,14px); bottom:clamp(9px,.7vw,13px);
+  width:clamp(28px,2.15vw,38px); height:clamp(24px,1.8vw,32px);
+  border:0; background:transparent; padding:0; cursor:pointer; z-index:5;
+  display:flex; align-items:center; justify-content:center; opacity:.92;
+}
+.profileArrow::before { content:""; width:0; height:0; border-left:clamp(7px,.55vw,10px) solid transparent; border-right:clamp(7px,.55vw,10px) solid transparent; border-top:clamp(10px,.75vw,14px) solid #efe2c4; filter:drop-shadow(0 1px 1px rgba(0,0,0,.7)); }
+.profileArrow:hover::before,.profileArrow:focus-visible::before { border-top-color:var(--accent); }
+.profileArrow.disabled { opacity:.30; cursor:default; }
+.profileArrow:focus-visible { outline:1px solid var(--accent); outline-offset:1px; }
+.server { display:flex; align-items:center; justify-content:flex-start; gap:clamp(10px,1vw,16px); text-align:left; padding:clamp(7px,.7vw,12px) clamp(14px,1.4vw,24px); }
+.serverIcon { width:clamp(38px,3.2vw,54px); height:clamp(38px,3.2vw,54px); object-fit:contain; flex:0 0 auto; image-rendering:auto; }
+.serverCopy { min-width:0; flex:1; }
+.server .title { font-size:clamp(16px,1.35vw,24px); font-weight:800; letter-spacing:.35px; line-height:1.04; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.server .version { margin-top:clamp(3px,.42vh,7px); font-size:clamp(14px,.95vw,19px); font-weight:650; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.server.active .version { color:var(--ink); }
+#launch { border:none; background:transparent; border-radius:6px; width:100%; height:auto; aspect-ratio:2070 / 432; align-self:end; }
+#launch img { width:100%; height:auto; aspect-ratio:2070 / 432; object-fit:contain; display:block; image-rendering:auto; }
+#launch .launchText { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#efe2c4; text-shadow:0 2px 5px rgba(0,0,0,.85); font-weight:900; font-size:40px; line-height:1; letter-spacing:.8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#launch.disabled { opacity:.54; cursor:default; }
+#launch.disabled:hover { box-shadow:none; }
+.link { min-width:0; border:1px solid var(--edge); border-radius:5px; background:var(--panel); color:var(--ink); display:flex; align-items:center; justify-content:center; gap:clamp(5px,.55vw,9px); font-size:clamp(14px,.92vw,18px); font-weight:750; cursor:pointer; transition:border-color .14s ease,background .14s ease; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; padding:0 clamp(6px,.65vw,10px); }
+.link img { width:clamp(16px,1.3vw,22px); height:clamp(16px,1.3vw,22px); object-fit:contain; flex:0 0 auto; image-rendering:auto; }
+.link:hover { border-color:var(--accent); background:color-mix(in srgb,var(--accent) 8%,var(--panel)); }
+@media (max-width:1120px) {
+  #stage { grid-template-columns:minmax(320px,42%) minmax(0,58%); gap:10px; }
+  #right { gap:8px; }
+  #servers,#modes,#assistants,#links { gap:8px; }
+}
+@media (max-height:720px) {
+  #stage { padding:6px; }
+  #right { grid-template-rows:62px minmax(0,1fr) minmax(0,1.1fr) max-content 34px; gap:6px; }
+  .icon-card img { padding:5px; }
+}
+</style>
+</head>
+<body class="{{themeClass}}">
+<div id="stage">
+  <div id="hero"><img id="logo" src="{{logo}}" alt="" aria-hidden="true" draggable="false"></div>
+  <div id="right">
+    <div id="servers">
+      <div id="serverLive" class="card server"><img class="serverIcon" id="liveIcon" src="{{liveIcon}}"><div class="serverCopy"><div class="title" id="liveTitle"></div><div class="version" id="liveVersion"></div></div></div>
+      <div id="serverTest" class="card server"><img class="serverIcon" id="testIcon" src="{{testIcon}}"><div class="serverCopy"><div class="title" id="testTitle"></div><div class="version" id="testVersion"></div></div></div>
+    </div>
+    <div id="modes">
+      <div id="monitor" class="card icon-card"><img src="{{monitor}}"><button id="monitorProfile" class="profileArrow" aria-label="Monitor control profiles"></button></div>
+      <div id="vr" class="card icon-card"><img src="{{vr}}"><button id="vrProfile" class="profileArrow" aria-label="VR control profiles"></button></div>
+    </div>
+    <div id="assistants">
+      <div id="neck" class="card icon-card assist"><img src="{{neck}}"></div>
+      <div id="keybind" class="card icon-card assist"><img src="{{keybind}}"></div>
+      <div id="vtrim" class="card icon-card assist"><img src="{{trim}}"></div>
+    </div>
+    <div id="launch" class="card"><img id="launchImage" src="{{launchNormal}}"><div class="launchText" id="launchText"></div></div>
+    <div id="links"><div class="link" id="discord"><img src="{{discordIcon}}"><span></span></div><div class="link" id="youtube"><img src="{{youtubeIcon}}"><span></span></div><div class="link" id="support"><img src="{{supportIcon}}"><span></span></div></div>
+  </div>
+</div>
+<script>
+const launchImages={normal:'{{launchNormal}}',update:'{{launchUpdate}}',running:'{{launchRunning}}'};
+const serverImages={live:'{{liveIcon}}',liveActive:'{{liveActiveIcon}}',test:'{{testIcon}}',testActive:'{{testActiveIcon}}'};
+const post=x=>window.chrome.webview.postMessage(x);
+const clickMap={serverLive:'server-live',serverTest:'server-test',monitor:'monitor',vr:'vr',neck:'neck',keybind:'keybind',vtrim:'vtrim',launch:'launch',discord:'discord',youtube:'youtube',support:'support'};
+for(const [id,msg] of Object.entries(clickMap)) {
+  const el=document.getElementById(id); el.tabIndex=0; el.setAttribute('role','button');
+  const invoke=()=>{ if(id==='launch' && el.classList.contains('disabled')) return; post(msg); };
+  el.addEventListener('click',invoke);
+  el.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); invoke(); } });
+}
+const setImage=(id,source)=>{ const el=document.getElementById(id); if(el.getAttribute('src')!==source) el.setAttribute('src',source); };
+const fitLaunchText=()=>{
+  const launch=document.getElementById('launch'), text=document.getElementById('launchText');
+  if(!launch||!text) return;
+  const h=launch.clientHeight, w=launch.clientWidth;
+  if(h<=0||w<=0) return;
+  let size=Math.max(18,Math.round(h*.44));
+  text.style.fontSize=size+'px';
+  // The artwork's stars and metal trim occupy both ends of the button.
+  const maxWidth=Math.max(80,Math.round(w*.60));
+  // Measure the glyphs, not the full-width flex container (whose scrollWidth
+  // can never be less than the button width).
+  const range=document.createRange(); range.selectNodeContents(text);
+  while(size>14 && range.getBoundingClientRect().width>maxWidth){ size--; text.style.fontSize=size+'px'; }
+};
+window.addEventListener('resize',()=>requestAnimationFrame(fitLaunchText));
+for(const [id,msg] of [['monitorProfile','profile-monitor'],['vrProfile','profile-vr']]) {
+  const el=document.getElementById(id);
+  const invoke=e=>{ e.preventDefault(); e.stopPropagation(); if(el.classList.contains('disabled')) return; post(msg); };
+  el.addEventListener('click',invoke);
+  el.addEventListener('mousedown',e=>e.stopPropagation());
+  el.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ invoke(e); } });
+}
+window.wtApplyState=s=>{
+  const active=(id,v)=>{
+    const el=document.getElementById(id), next=!!v;
+    el.classList.toggle('active',next);
+    // Selection changes do not animate or flash the raster artwork.
+  };
+  active('monitor',s.monitor); active('vr',s.vr); active('neck',s.neck); active('keybind',s.keybind); active('vtrim',s.vtrim);
+  active('serverLive',s.server==='live'); active('serverTest',s.server==='test');
+  setImage('liveIcon',s.server==='live'?serverImages.liveActive:serverImages.live);
+  setImage('testIcon',s.server==='test'?serverImages.testActive:serverImages.test);
+  document.getElementById('liveTitle').textContent=s.labels.live; document.getElementById('testTitle').textContent=s.labels.test;
+  document.getElementById('liveVersion').textContent=s.liveVersion; document.getElementById('testVersion').textContent=s.testVersion;
+  for(const [id,label] of [['monitor',s.labels.monitor],['vr',s.labels.vr]]) { const el=document.getElementById(id); el.removeAttribute('title'); el.setAttribute('aria-label',label); }
+  for(const [id,label] of [['neck',s.labels.neck],['keybind',s.labels.keybind],['vtrim',s.labels.vtrim]]) { const el=document.getElementById(id); const a=label+' · '+(s[id]?s.labels.on:s.labels.off); el.removeAttribute('title'); el.setAttribute('aria-label',a); }
+  document.getElementById('serverLive').setAttribute('aria-label',s.labels.live+' '+s.liveVersion);
+  document.getElementById('serverTest').setAttribute('aria-label',s.labels.test+' '+s.testVersion);
+  const profileState=s.profiles||{};
+  for(const [id,enabled] of [['monitorProfile',profileState.monitorEnabled],['vrProfile',profileState.vrEnabled]]) {
+    const el=document.getElementById(id);
+    el.style.display=profileState.visible?'flex':'none';
+    el.classList.toggle('disabled',!enabled);
+    el.tabIndex=profileState.visible&&enabled?0:-1;
+  }
+  const launch=document.getElementById('launch'); launch.classList.toggle('disabled',s.running || !!s.busy || (!s.canLaunch && !s.update));
+  setImage('launchImage',s.running?launchImages.running:(s.update?launchImages.update:launchImages.normal));
+  const launchLabel=s.running?s.labels.running:(s.update?s.labels.update:s.labels.launch); document.getElementById('launchText').textContent=launchLabel; launch.setAttribute('aria-label',launchLabel); requestAnimationFrame(fitLaunchText);
+  for(const [id,label] of [['discord',s.labels.discord],['youtube',s.labels.youtube],['support',s.labels.support]]) { document.querySelector('#'+id+' span').textContent=label; document.getElementById(id).setAttribute('aria-label',label); }
+};
+</script>
+</body>
+</html>
+""";
+    }
+
+    private static string PrepareWebAssetFolder()
+    {
+        string version = typeof(AviationHomePage).Assembly.GetName().Version?.ToString(3) ?? "current";
+        string root = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "WTVRSettingsAssistant",
+            "WebUiCache",
+            version,
+            AppThemeAssets.ActiveTheme);
+        Directory.CreateDirectory(root);
+
+        var assets = new Dictionary<string, string[]>
+        {
+            ["logo.png"] = ["VRA.png"],
+            ["monitor.png"] = ["Home_Monitor_New.png"],
+            ["vr.png"] = ["Home_VR_New.png"],
+            ["neck.png"] = ["IllustratedHead.png"],
+            ["keybind.png"] = ["IllustratedKeys.png"],
+            ["vtrim.png"] = ["Home_VTrim_New.png"],
+            ["launch-normal.png"] = ["PlayButton.png", "Launch_Red_Frame.png"],
+            ["launch-update.png"] = ["UpdateButton.png", "Launch_Update_Gold.png"],
+            ["launch-running.png"] = ["GameStarted.png", "PlayButton.png"]
+        };
+
+        foreach ((string targetName, string[] candidates) in assets)
+        {
+            string target = Path.Combine(root, targetName);
+            bool written = false;
+            foreach (string sourceName in candidates)
+            {
+                try
+                {
+                    using Image image = AssetManager.LoadImage(sourceName);
+                    image.Save(target, ImageFormat.Png);
+                    written = true;
+                    break;
+                }
+                catch { }
+            }
+
+            if (!written && !File.Exists(target))
+            {
+                using Bitmap placeholder = new(1, 1);
+                placeholder.SetPixel(0, 0, Color.Transparent);
+                placeholder.Save(target, ImageFormat.Png);
+            }
+        }
+
+        void SaveDrawnIcon(string fileName, string iconName, Color color)
+        {
+            string target = Path.Combine(root, fileName);
+            using Bitmap bitmap = new(160, 160, PixelFormat.Format32bppArgb);
+            using Graphics graphics = Graphics.FromImage(bitmap);
+            graphics.Clear(Color.Transparent);
+            graphics.SmoothingMode = SmoothingMode.HighQuality;
+            IllustratedTheme.DrawIcon(graphics, iconName, new Rectangle(10, 10, 140, 140), color);
+            bitmap.Save(target, ImageFormat.Png);
+        }
+
+        try
+        {
+            SaveDrawnIcon("live.png", "live", IllustratedTheme.Ivory);
+            SaveDrawnIcon("live-active.png", "live", IllustratedTheme.Gold);
+            SaveDrawnIcon("test.png", "test", IllustratedTheme.Ivory);
+            SaveDrawnIcon("test-active.png", "test", IllustratedTheme.Gold);
+            SaveDrawnIcon("discord.png", "discord", IllustratedTheme.Ivory);
+            SaveDrawnIcon("youtube.png", "youtube", IllustratedTheme.Ivory);
+            SaveDrawnIcon("support.png", "beer", IllustratedTheme.Ivory);
+        }
+        catch
+        {
+            // Cosmetic icons are non-critical; the card text remains usable.
+        }
+
+        // Web UI cache is app-owned. Keep only the current assembly-version tree;
+        // user settings/profiles live elsewhere and are never touched here.
+        try
+        {
+            string versionsRoot = Directory.GetParent(Directory.GetParent(root)!.FullName)!.FullName;
+            foreach (string directory in Directory.EnumerateDirectories(versionsRoot))
+            {
+                if (Path.GetFileName(directory).Equals(version, StringComparison.OrdinalIgnoreCase)) continue;
+                try { Directory.Delete(directory, recursive: true); } catch { }
+            }
+        }
+        catch { }
+
+        return root;
     }
 
     private static void SetCardText(AviationActionCard card, string text)
@@ -206,20 +877,21 @@ internal sealed class AviationHomePage : UserControl
             int w = S(rightWidth);
             int gap = S(10);
 
-            _logo.Visible = scale >= 0.58f;
+            bool showHeroArea = scale >= 0.58f;
+            _logo.Visible = !_webReady && showHeroArea;
             int profileStripHeight = Math.Max(64, S(68));
             if (_aircraftProfiles is not null)
             {
-                _aircraftProfiles.Visible = _showAircraftProfiles && _logo.Visible;
-                _aircraftProfiles.SetBounds(S(2), canvasY + canvasHeight - profileStripHeight, Math.Max(180, rightX - S(16)), profileStripHeight);
+                _aircraftProfiles.Visible = _showAircraftProfiles && showHeroArea;
+                _aircraftProfiles.SetBounds(canvasX + S(2), canvasY + canvasHeight - profileStripHeight, Math.Max(180, rightX - canvasX - S(16)), profileStripHeight);
             }
-            if (_logo.Visible)
+            if (!_webReady && _logo.Visible)
             {
                 // Keep the hero centered in the real open area to the left of the
                 // Monitor/VR/server stack. In fullscreen the right stack is anchored
                 // to the right, so the old fixed design-space logo cell drifted away
                 // from the visual center of the left panel.
-                int logoAreaLeft = 0;
+                int logoAreaLeft = canvasX;
                 int logoAreaRight = Math.Max(logoAreaLeft + S(360), rightX - S(18));
                 int logoAreaWidthActual = Math.Max(S(360), logoAreaRight - logoAreaLeft);
                 int side = Math.Min(
@@ -239,7 +911,7 @@ internal sealed class AviationHomePage : UserControl
             int serverHeight = S(80);
             int modeY = canvasY + S(102);
             int modeHeight = S(220);
-            int launchHeight = S(130);
+            int launchHeight = Math.Max(S(130), _launch.PreferredHeightForWidth(w));
             int linksHeight = S(44);
             int bottomPad = S(10);
             int launchGap = S(14);
@@ -255,6 +927,21 @@ internal sealed class AviationHomePage : UserControl
             _monitor.SetBounds(rightX, modeY, half, modeHeight);
             _vr.SetBounds(rightX + half + gap, modeY, w - half - gap, modeHeight);
 
+            if (!_webReady && _desktopProfileSelector is not null && _vrProfileSelector is not null)
+            {
+                int selectorSize = Math.Clamp(modeHeight / 7, S(26), S(42));
+                _desktopProfileSelector.SetBounds(
+                    Math.Max(0, _monitor.ClientSize.Width - selectorSize - S(9)),
+                    Math.Max(0, _monitor.ClientSize.Height - selectorSize - S(9)),
+                    selectorSize, selectorSize);
+                _vrProfileSelector.SetBounds(
+                    Math.Max(0, _vr.ClientSize.Width - selectorSize - S(9)),
+                    Math.Max(0, _vr.ClientSize.Height - selectorSize - S(9)),
+                    selectorSize, selectorSize);
+                _desktopProfileSelector.BringToFront();
+                _vrProfileSelector.BringToFront();
+            }
+
             int third = (w - gap * 2) / 3;
             _neck.SetBounds(rightX, featureY, third, featureHeight);
             _keys.SetBounds(rightX + third + gap, featureY, third, featureHeight);
@@ -266,6 +953,12 @@ internal sealed class AviationHomePage : UserControl
             {
                 control.Dock = DockStyle.Fill;
                 control.Margin = new Padding(S(4), 0, S(4), 0);
+            }
+
+            if (_webReady)
+            {
+                SetNativeSurfaceVisible(false);
+                _aircraftProfiles?.BringToFront();
             }
 
             AutoScroll = false;
@@ -337,7 +1030,7 @@ internal class AviationActionCard : Control
         UpdateToolTip();
     }
 
-    public void UpdateToolTip() => _toolTip.SetToolTip(this, Text + (Active ? " · " + _onText : " · " + _offText));
+    public void UpdateToolTip() => AccessibleName = Text + (Active ? " · " + _onText : " · " + _offText);
 
     public AviationActionCard(string text, string icon, Image? image, Action click)
     {
@@ -350,7 +1043,6 @@ internal class AviationActionCard : Control
         DoubleBuffered = true;
         BackColor = IllustratedTheme.Background;
         AccessibleName = text;
-        _toolTip.SetToolTip(this, text);
         SetStyle(ControlStyles.ResizeRedraw | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.Selectable, true);
         TabStop = true;
         MouseUp += (_, e) =>
@@ -491,7 +1183,7 @@ internal sealed class AviationServerSelector : Control
     private string _versionUnknown = "version unknown";
 
     [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-    public GameServerChannel Selected { get => _selected; set { _selected = value; Invalidate(); } }
+    public GameServerChannel Selected { get => _selected; set { if (_selected == value) return; _selected = value; Invalidate(); } }
 
     public AviationServerSelector(Action<GameServerChannel> changed, Action refresh)
     {
@@ -686,6 +1378,22 @@ internal sealed class AviationLaunchButton : Control
         };
     }
 
+    public int PreferredHeightForWidth(int width)
+    {
+        Image? frame = GameRunning ? _runningFrame : UpdateAvailable ? _updateFrame : _launchFrame;
+        if (frame == null || frame.Width <= 0 || frame.Height <= 0 || width <= 0) return 0;
+        return Math.Max(1, (int)Math.Round(width * (frame.Height / (double)frame.Width)));
+    }
+
+    private static Rectangle FitFrame(Image frame, Rectangle bounds)
+    {
+        if (frame.Width <= 0 || frame.Height <= 0 || bounds.Width <= 0 || bounds.Height <= 0) return bounds;
+        double scale = Math.Min(bounds.Width / (double)frame.Width, bounds.Height / (double)frame.Height);
+        int width = Math.Max(1, (int)Math.Round(frame.Width * scale));
+        int height = Math.Max(1, (int)Math.Round(frame.Height * scale));
+        return new Rectangle(bounds.X + (bounds.Width - width) / 2, bounds.Y + (bounds.Height - height) / 2, width, height);
+    }
+
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
@@ -693,15 +1401,15 @@ internal sealed class AviationLaunchButton : Control
         e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
         e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
         bool running = GameRunning;
-        bool update = !running && CanLaunch && UpdateAvailable;
-        Color color = CanLaunch || running ? Color.FromArgb(255, 239, 225) : IllustratedTheme.Muted;
+        bool update = !running && UpdateAvailable;
+        Color color = CanLaunch || running || update ? Color.FromArgb(239, 226, 196) : IllustratedTheme.Muted;
         Rectangle launchBounds = new(2, 2, Width - 5, Height - 5);
         if (launchBounds.Width <= 0 || launchBounds.Height <= 0) return;
 
         Image? frame = running ? _runningFrame : update ? _updateFrame : _launchFrame;
         if (frame != null)
         {
-            e.Graphics.DrawImage(frame, launchBounds);
+            e.Graphics.DrawImage(frame, FitFrame(frame, launchBounds));
         }
         else
         {
@@ -718,8 +1426,8 @@ internal sealed class AviationLaunchButton : Control
                 e.Graphics.DrawLine(glint, 18, 6, Width - 18, 6);
             }
         }
-        int preferred = Math.Max(12, (int)Math.Round(Height * 0.38));
-        int labelGuard = Math.Max(18, (int)Math.Round(Width * 0.12));
+        int preferred = Math.Max(18, (int)Math.Round(Height * 0.44));
+        int labelGuard = Math.Max(12, (int)Math.Round(Width * 0.20));
         int available = Math.Max(80, Width - labelGuard * 2);
         string label = running ? _runningLabel : update ? _updateLabel : _launchLabel;
         while (preferred > 10)
@@ -797,6 +1505,3 @@ internal sealed class AviationLinkButton : Control
         if (Focused) ControlPaint.DrawFocusRectangle(e.Graphics, new Rectangle(4, 4, Width - 9, Height - 9));
     }
 }
-
-
-

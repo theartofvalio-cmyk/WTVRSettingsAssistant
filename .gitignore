@@ -38,3 +38,6 @@ Desktop.ini
 .DS_Store
 .vscode/
 .idea/
+
+Builds/
+**/Settings/

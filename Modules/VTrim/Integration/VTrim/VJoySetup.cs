@@ -7,6 +7,7 @@ namespace HOTASTrimUtility;
 
 public static class VJoySetup
 {
+    static VJoySetup() => VJoyNativeResolver.Ensure();
     private static readonly SemaphoreSlim SetupGate = new(1, 1);
     private const string InstallerHash = "EF569A3105CD301B89580F18F60C66B339E95296ACF2C0DFCAF4B4BBF8AB68FE";
     [DllImport("vJoyInterface.dll", CallingConvention = CallingConvention.Cdecl)] private static extern bool vJoyEnabled();
@@ -50,6 +51,8 @@ public static class VJoySetup
             if (!installed || config is null)
             {
                 string installer = Path.Combine(AppContext.BaseDirectory, "Drivers", "vJoy", "vJoySetup.exe");
+                if (!File.Exists(installer))
+                    installer = Path.Combine(AppContext.BaseDirectory, "Components", "Drivers", "vJoy", "vJoySetup.exe");
                 if (!File.Exists(installer)) throw new FileNotFoundException("The bundled vJoy installer is missing. Extract the complete Assistant release.", installer);
                 using (var file = File.OpenRead(installer))
                     if (!Convert.ToHexString(SHA256.HashData(file)).Equals(InstallerHash, StringComparison.OrdinalIgnoreCase))

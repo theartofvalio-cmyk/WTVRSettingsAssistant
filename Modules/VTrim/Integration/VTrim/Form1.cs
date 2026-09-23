@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -9,6 +9,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
@@ -22,6 +23,8 @@ namespace HOTASTrimUtility;
 [DesignerCategory("Code")]
 public partial class Form1 : Form
 {
+    public static void SetHostVisualTheme(string? themeName) => Theme.ApplyVariant(themeName);
+
     private enum TrimAction
     {
         NoseDown,
@@ -97,9 +100,19 @@ public partial class Form1 : Form
     {
         public string Id { get; set; } = Guid.NewGuid().ToString("D");
         public string? AircraftId { get; set; }
-        public int Version { get; set; } = 10;
+        // Exact normalized value observed from War Thunder /indicators.
+        // This lets auto-selection remain stable even before/without a Wiki match.
+        public string? DetectedAircraftKey { get; set; }
+        public int Version { get; set; } = 13;
         public string ProfileName { get; set; } = string.Empty;
         public string AircraftType { get; set; } = "Prop Plane";
+
+        // v2.2: aircraft profiles can either follow the live Default Profile or
+        // keep a private aircraft-specific control snapshot. Existing pre-v13
+        // profiles are migrated to Custom Controls so no tuned setup is lost.
+        public bool UseCustomControls { get; set; } = true;
+        public bool HasCustomControlsSnapshot { get; set; } = true;
+        public string DampingSupport { get; set; } = "Unknown";
 
         public Dictionary<string, SavedActionBinding> Bindings { get; set; } =
             new(StringComparer.OrdinalIgnoreCase);
@@ -243,7 +256,9 @@ public partial class Form1 : Form
     {
         public required Guid Guid { get; init; }
         public required string FriendlyName { get; init; }
-        public required IDirectInputDevice8 Device { get; init; }
+        public IDirectInputDevice8? Device { get; init; }
+        public int? XInputIndex { get; init; }
+        public bool IsXInput => XInputIndex.HasValue;
 
         public DirectInputState? PreviousState { get; set; }
 
@@ -251,6 +266,7 @@ public partial class Form1 : Form
 
         public void Dispose()
         {
+            if (Device is null) return;
             try
             {
                 Device.Unacquire();
@@ -626,23 +642,15 @@ public partial class Form1 : Form
         var navigation = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 5,
+            ColumnCount = 4,
             RowCount = 1,
             Margin = Padding.Empty,
             Padding = new Padding(18, 5, 18, 5),
             BackColor = Theme.Navigation
         };
 
-        navigation.ColumnStyles.Add(
-            new ColumnStyle(SizeType.Percent, 19F));
-        navigation.ColumnStyles.Add(
-            new ColumnStyle(SizeType.Percent, 22F));
-        navigation.ColumnStyles.Add(
-            new ColumnStyle(SizeType.Percent, 17F));
-        navigation.ColumnStyles.Add(
-            new ColumnStyle(SizeType.Percent, 18F));
-        navigation.ColumnStyles.Add(
-            new ColumnStyle(SizeType.Percent, 24F));
+        for (int navColumn = 0; navColumn < 4; navColumn++)
+            navigation.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
         navigation.RowStyles.Add(
             new RowStyle(SizeType.Percent, 100F));
 
@@ -681,6 +689,9 @@ public partial class Form1 : Form
         };
 
         BuildTrimTab(dashboardPage);
+        _sharedTrimDashboard = dashboardPage;
+        _sharedTrimDashboardHome = pageHost;
+        _sharedTrimDashboardSurface = dashboardPage.Controls.Cast<Control>().FirstOrDefault();
         BuildSetupTab(setupPage);
         BuildProfilesTab(profilesPage);
 
@@ -712,8 +723,12 @@ public partial class Form1 : Form
         curvesButton.Margin = new Padding(5, 0, 5, 0);
 
         _openProfiles = () => ShowPage(2);
+        _openTrimDashboard = () => ShowPage(0);
+        _openCurves = () => ShowPage(3);
         void ShowPage(int pageIndex)
         {
+            if (pageIndex != 2 && _aircraftControlEditorView is not null)
+                CloseAircraftControlEditor(showProfilesBrowser: true);
             dashboardPage.Visible = pageIndex == 0;
             setupPage.Visible = pageIndex == 1;
             profilesPage.Visible = pageIndex == 2;
@@ -729,6 +744,14 @@ public partial class Form1 : Form
             }
             else if (pageIndex == 2)
             {
+                // If no aircraft editor is currently open, the Profiles page must
+                // always restore its browser. Earlier builds left the browser hidden
+                // after jumping from a custom aircraft to the Trim Dashboard.
+                if (_aircraftControlEditorView is null && _profilesBrowserView is not null && !_profilesBrowserView.IsDisposed)
+                {
+                    _profilesBrowserView.Visible = true;
+                    _profilesBrowserView.BringToFront();
+                }
                 profilesPage.BringToFront();
                 UpdateProfileSummary();
             }
@@ -749,25 +772,10 @@ public partial class Form1 : Form
         profilesButton.Click += (_, _) => ShowPage(2);
         curvesButton.Click += (_, _) => ShowPage(3);
 
-        var nativeButtonsBadge = new Label
-        {
-            Text = VT("Nav.Native"),
-            Dock = DockStyle.Fill,
-            Margin = Padding.Empty,
-            BackColor = Theme.Navigation,
-            ForeColor = Theme.Success,
-            Font = new Font("Segoe UI Semibold", 8.5F),
-            TextAlign = ContentAlignment.MiddleRight,
-            AutoEllipsis = false,
-            UseMnemonic = false
-        };
-        nativeButtonsBadge.Tag = "i18n:Nav.Native";
-
         navigation.Controls.Add(dashboardButton, 0, 0);
-        navigation.Controls.Add(setupButton, 1, 0);
-        navigation.Controls.Add(curvesButton, 2, 0);
-        navigation.Controls.Add(profilesButton, 3, 0);
-        navigation.Controls.Add(nativeButtonsBadge, 4, 0);
+        navigation.Controls.Add(curvesButton, 1, 0);
+        navigation.Controls.Add(profilesButton, 2, 0);
+        navigation.Controls.Add(setupButton, 3, 0);
 
         _rootLayout.Controls.Add(header, 0, 0);
         _rootLayout.Controls.Add(navigation, 0, 1);
@@ -820,30 +828,38 @@ public partial class Form1 : Form
     }
 
     private string VT(string key) => VTrimText(_languageCode, key);
+    private string VF(string key, params object?[] args) => string.Format(CultureInfo.CurrentCulture, VT(key), args);
 
     private static string NormalizeVTrimLanguage(string? code)
     {
-        if (string.Equals(code, "bg", StringComparison.OrdinalIgnoreCase)) return "bg";
-        if (string.Equals(code, "el", StringComparison.OrdinalIgnoreCase)) return "el";
-        if (string.Equals(code, "ro", StringComparison.OrdinalIgnoreCase)) return "ro";
-        return "en";
+        string normalized = (code ?? string.Empty).Trim();
+        string[] supported = ["en", "bg", "es", "de", "fr", "pt", "pl", "ru", "uk", "tr", "el", "ro", "he", "zh-Hans"];
+        return supported.FirstOrDefault(item => string.Equals(item, normalized, StringComparison.OrdinalIgnoreCase)) ?? "en";
     }
 
     private static string VTrimText(string languageCode, string key)
     {
+        if (VTrimTranslations.TryGet(NormalizeVTrimLanguage(languageCode), key, out string? translated) && translated is not null)
+            return translated;
+
+        if (string.Equals(key, "Header.Description", StringComparison.Ordinal))
+            return "Pitch  •  Roll  •  Rudder";
+        if (string.Equals(key, "Nav.Native", StringComparison.Ordinal))
+            return string.Empty;
+
         string English(string k) => k switch
         {
             "Devices.Invert" => "Invert",
             "Nav.Trim" => "Trim Dashboard", "Nav.Devices" => "Devices & Output", "Nav.Curves" => "Axis Curves", "Nav.Profiles" => "Profiles", "Nav.Native" => "BUTTONS STAY NATIVE",
-            "Header.WindowTitle" => "VTrim - Virtual Trim for HOTAS & Rudder Pedals", "Header.Title" => "VTrim", "Header.Subtitle" => "Virtual Trim for HOTAS & Rudder Pedals", "Header.Description" => "Pitch  •  Roll  •  Rudder\r\nPhysical buttons stay native", "Header.Support" => "Buy me a Beer",
+            "Header.WindowTitle" => "VTrim - Virtual Trim for HOTAS & Rudder Pedals", "Header.Title" => "VTrim", "Header.Subtitle" => "Virtual Trim for HOTAS & Rudder Pedals", "Header.Description" => "Pitch  •  Roll  •  Rudder", "Header.Support" => "Buy me a Beer",
             "Profiles.GameProfiles" => "Game profiles", "Profiles.AircraftType" => "Aircraft type", "Profiles.New" => "New", "Profiles.Duplicate" => "Duplicate", "Profiles.Rename" => "Rename", "Profiles.Delete" => "Delete", "Profiles.NewProfile" => "New profile", "Profiles.ProfileName" => "Profile name", "Profiles.Create" => "Create", "Profiles.Contents" => "Profile Contents", "Profiles.Active" => "Active profile: {0}", "Profiles.Temporary" => "None (temporary session)", "Profiles.Aircraft" => "Aircraft type: {0}", "Profiles.TrimBinds" => "Trim keybinds: {0} of {1}", "Profiles.Axes" => "Physical axes: {0} of {1} configured", "Profiles.Roll" => "Roll: {0}", "Profiles.Pitch" => "Pitch: {0}", "Profiles.Rudder" => "Rudder: {0}", "Profiles.Saved" => "Profiles are normal JSON files inside the app's Profiles folder.", "Profiles.Unsaved" => "Nothing in this temporary session will be saved when VTrim closes.", "Profiles.Files" => "Profiles are normal JSON files inside the app's Profiles folder.",
             "Dashboard.LiveMonitor" => "Live monitor", "Dashboard.Legend" => "Move physical controls. Gold shows virtual trim added by VTrim.", "Dashboard.InstructorOff" => "Flight Assistant: OFF", "Dashboard.InstructorOn" => "Flight Assistant: ON", "Dashboard.StoreTrim" => "Store Trim", "Dashboard.CenterAllTrim" => "CENTER ALL", "Dashboard.Stick" => "STICK", "Dashboard.RudderYaw" => "RUDDER / YAW TRIM", "Dashboard.RudderTrim" => "RUDDER TRIM",
-            "Devices.SetupTitle" => "Physical Input Devices", "Devices.AutoDetect" => "Auto-Detect", "Devices.Refresh" => "Refresh", "Devices.Input" => "Physical Input Devices", "Devices.NoneDetected" => "No physical DirectInput devices detected.", "Devices.ConnectThenRefresh" => "Connect a HOTAS, yoke, pedals or other controller, then click Refresh.", "Devices.CountDetected" => "{0} physical DirectInput device(s) detected.", "Devices.ReadyProfile" => "Device ready for profile: {0}", "Devices.InitFailed" => "DirectInput initialization failed: {0}", "Devices.InputFailed" => "DirectInput read failed: {0}", "Devices.LastDetected" => "Last detected input: {0}", "Devices.Routing" => "Physical Axis Routing", "Devices.RecenterAll" => "Recenter All", "Devices.Recenter" => "Recenter", "Devices.DetectRoll" => "Detect Roll", "Devices.DetectPitch" => "Detect Pitch", "Devices.DetectRudder" => "Detect Rudder", "Devices.SetupHelp" => "Start from neutral, click Detect, then move only the requested axis.",
+            "Devices.SetupTitle" => "Physical Input Devices", "Devices.AutoDetect" => "Auto-Detect", "Devices.Refresh" => "Refresh", "Devices.Input" => "Physical Input Devices", "Devices.NoneDetected" => "No physical controllers detected.", "Devices.ConnectThenRefresh" => "Connect a HOTAS, yoke, pedals, Xbox/XInput gamepad or other controller, then click Refresh.", "Devices.CountDetected" => "{0} physical controller(s) detected.", "Devices.ReadyProfile" => "Device ready for profile: {0}", "Devices.InitFailed" => "Controller input initialization failed: {0}", "Devices.InputFailed" => "Controller input read failed: {0}", "Devices.LastDetected" => "Last detected input: {0}", "Devices.Routing" => "Physical Axis Routing", "Devices.RecenterAll" => "Recenter All", "Devices.Recenter" => "Recenter", "Devices.DetectRoll" => "Detect Roll", "Devices.DetectPitch" => "Detect Pitch", "Devices.DetectRudder" => "Detect Rudder", "Devices.SetupHelp" => "Start from neutral, click Detect, then move only the requested axis.",
             "Common.Listening" => "Listening...", "Common.Connect" => "Connect", "Common.Disconnect" => "Disconnect", "Common.Cancelled" => "Detection was cancelled.", "Common.Cancel" => "Cancel", "Common.NotConfigured" => "Not configured",
             "Sensitivity.Title" => "Trim sensitivity", "Sensitivity.Description" => "Adjust how fast virtual trim moves and how safely input is accepted.", "Sensitivity.HoldSpeed" => "Hold speed", "Sensitivity.UniversalTrigger" => "Universal trigger", "Sensitivity.InputGuard" => "Input guard", "Sensitivity.RateHelp" => "Higher values move trim faster while a command is held.", "Sensitivity.RepeatOn" => "Repeat: ON", "Sensitivity.RepeatOff" => "Repeat: OFF", "Sensitivity.GuardOn" => "Guard: ON", "Sensitivity.GuardOff" => "Guard: OFF", "Sensitivity.TriggerOn" => "Trigger: ON", "Sensitivity.TriggerOff" => "Trigger: OFF",
-            "Status.LastInputNone" => "Last input: none", "Status.ConfigureAxes" => "Configure Roll, Pitch and Rudder physical axes to enable live routing.", "Status.DirectInputNotStarted" => "DirectInput not started", "Curves.Heading" => "Axis Curves\r\nThe graph shows physical input before trim and Flight Assistant correction.", "Curves.Roll" => "Roll", "Curves.Pitch" => "Pitch", "Curves.RudderYaw" => "Rudder / Yaw", "Curves.Curve" => "Curve (-100 to +100)", "Curves.CenterDeadzone" => "Center deadzone (%)", "Curves.InputRange" => "Input range (%)", "Curves.OutputRange" => "Output range (%)", "Curves.ResetAxis" => "Reset this axis", "Curves.CurveTooltip" => "0 = linear; positive softens the center; negative increases center response.", "Curves.OutputTooltip" => "Limits the shaped physical command. Trim and damping are added afterward.", "Curves.Input" => "Input", "Curves.Output" => "Output",
+            "Status.LastInputNone" => "Last input: none", "Status.ConfigureAxes" => "Configure Roll, Pitch and Rudder physical axes to enable live routing.", "Status.DirectInputNotStarted" => "Controller input not started", "Curves.Heading" => "Axis Curves\r\nThe graph shows physical input before trim and Flight Assistant correction.", "Curves.Roll" => "Roll", "Curves.Pitch" => "Pitch", "Curves.RudderYaw" => "Rudder / Yaw", "Curves.Curve" => "Curve (-100 to +100)", "Curves.CenterDeadzone" => "Center deadzone (%)", "Curves.InputRange" => "Input range (%)", "Curves.OutputRange" => "Output range (%)", "Curves.ResetAxis" => "Reset this axis", "Curves.CurveTooltip" => "0 = linear; positive softens the center; negative increases center response.", "Curves.OutputTooltip" => "Limits the shaped physical command. Trim and damping are added afterward.", "Curves.Input" => "Input", "Curves.Output" => "Output", "Curves.EditorHelp" => "Drag points  •  click line to add  •  right-click point to remove",
             "Trim.Bindings" => "Trim Bindings", "Trim.BindingsHelp" => "Click a control, then press one input. Hold a modifier first to create a two-button combination.", "Trim.ClickBind" => "Click to bind", "Trim.Center" => "CENTER ALL", "Trim.Store" => "STORE TRIM", "Trim.Instructor" => "FLIGHT ASSISTANT", "Trim.NoseDown" => "NOSE DOWN", "Trim.NoseUp" => "NOSE UP", "Trim.RollLeft" => "ROLL LEFT", "Trim.RollRight" => "ROLL RIGHT", "Trim.RudderLeft" => "RUDDER LEFT", "Trim.RudderRight" => "RUDDER RIGHT", "Trim.AlreadyStored" => "Trim is already stored. Return controls to center before capturing again.", "Trim.NeedsFreshInput" => "Store Trim needs fresh input from each configured controller. Check Devices & Output.", "Trim.RollValue" => "Roll trim: {0:+0.00;-0.00;0.00}%", "Trim.PitchValue" => "Pitch trim: {0:+0.00;-0.00;0.00}%", "Trim.RudderValue" => "Rudder trim: {0:+0.00;-0.00;0.00}%", "Trim.AssignTooltip" => "Assign an input for {0}",
-            "VJoy.Connected" => "vJoy Device 1 connected: X, Y and Rz output is active.", "VJoy.OutputActive" => "vJoy Device 1 is receiving VTrim output.", "VJoy.NotReadyRetry" => "vJoy Device 1 is not ready. Auto-connect will retry.", "VJoy.ConnectFailed" => "Could not connect to vJoy Device 1: {0}", "VJoy.AutoFailed" => "Auto-connect failed. Open Devices & Output and use Connect.", "VJoy.Retrying" => "vJoy Device 1 is not ready — automatic retry ({0} tries remaining).", "VJoy.Disconnected" => "vJoy Device 1: disconnected", "VJoy.ClickReconnect" => "vJoy Device 1 is disconnected. Click Connect to reconnect.", "VJoy.Title" => "VTrim Output", "VJoy.Device1" => "vJoy DEVICE 1", "VJoy.StatusDisconnected" => "Virtual output: disconnected", "VJoy.SetupConnect" => "Setup / Connect", "VJoy.TestAxes" => "Test axes", "VJoy.Description" => "ONE-CLICK SETUP  ·  Installs bundled signed vJoy, configures Device 1 and connects output. Windows may ask for administrator access.\r\n\r\nIn War Thunder, bind Roll / Pitch / Rudder to vJoy X / Y / Rz. Physical HOTAS buttons stay native. Switch mappings use virtual buttons 1–32.", "VJoy.AutoConnect" => "Connect output automatically", "VJoy.StartWithWindows" => "Start VTrim with Windows, minimized",
+            "VJoy.Connected" => "vJoy Device 1 connected: X, Y and Rz output is active.", "VJoy.OutputActive" => "vJoy Device 1 is receiving VTrim output.", "VJoy.NotReadyRetry" => "vJoy Device 1 is not ready. Auto-connect will retry.", "VJoy.ConnectFailed" => "Could not connect to vJoy Device 1: {0}", "VJoy.AutoFailed" => "Auto-connect failed. Open Devices & Output and use Connect.", "VJoy.Retrying" => "vJoy Device 1 is not ready — automatic retry ({0} tries remaining).", "VJoy.Disconnected" => "vJoy Device 1: disconnected", "VJoy.ClickReconnect" => "vJoy Device 1 is disconnected. Click Connect to reconnect.", "VJoy.Title" => "VTrim Output", "VJoy.Device1" => "vJoy DEVICE 1", "VJoy.StatusDisconnected" => "Virtual output: disconnected", "VJoy.SetupConnect" => "Setup / Connect", "VJoy.TestAxes" => "Test axes", "VJoy.Description" => "SETUP / CONNECT installs or configures vJoy Device 1 when needed, then connects VTrim.\r\nIn War Thunder: bind Roll → vJoy X, Pitch → vJoy Y and Rudder → vJoy Rz. Switch mappings use vJoy buttons 1–32.", "VJoy.AutoConnect" => "Connect output automatically", "VJoy.StartWithWindows" => "Start VTrim with Windows, minimized",
             "Instructor.On" => "Flight Assistant enabled. Hold a stick position briefly, then release toward center to send game trim.", "Instructor.Off" => "Flight Assistant disabled. Manual trim is available.", "Instructor.PropOnly" => "Flight Assistant is available for Prop Plane profiles only.", "Instructor.BindGameTrim" => "Open Trim setup and bind the same keyboard command as Trim aircraft in War Thunder.", "Instructor.StateOff" => "Enable Flight Assistant to trim when the stick springs back toward center.", "Instructor.NoOutput" => "Set up and connect vJoy in Devices & Output.", "Instructor.GameNotFocused" => "Paused until War Thunder is the foreground window.", "Instructor.LowAirspeed" => "Standby below 90 km/h indicated airspeed.", "Instructor.Trimming" => "Captured the previous stick position; sending the game's trim command.", "Instructor.ReturnToCenter" => "Game trim sent. Let the stick finish returning to center.", "Instructor.ReleaseToTrim" => "Position ready. Let the stick spring back to capture game trim.", "Instructor.CheckHotas" => "A configured controller is disconnected or no flight axis is assigned.", "Instructor.TrimKeyBlocked" => "Trim key could not be sent. Release keyboard modifiers and check game focus / elevation.", "Instructor.DefaultDetail" => "Move the stick, hold briefly, then release toward center. Game trim: {0}", "Instructor.TrimSetup" => "Trim setup", "Instructor.DialogTitle" => "Flight Assistant · Spring-return trim", "Instructor.DialogHeading" => "PROP PLANE INSTRUCTOR", "Instructor.TrimOnReturn" => "Trim on spring return", "Instructor.GameTrimKey" => "Game trim key", "Instructor.ClickTrimKey" => "Click here and press your game trim key", "Instructor.NotAssigned" => "Not assigned", "Instructor.HoldBeforeRelease" => "Hold before release (ms)", "Instructor.ReturnMovement" => "Return movement (%)", "Instructor.Help" => "1. In War Thunder, bind Trim aircraft to the same keyboard key or chord shown above. If you use a HOTAS trim button, add this key as a second game binding.\r\n\r\n2. Bind Roll / Pitch / Rudder to vJoy X / Y / Rz. Move the stick, hold briefly, then let it spring back. Flight Assistant captures the position before the return and taps game trim once.\r\n\r\nWorks in a focused War Thunder flight above 90 km/h. The aircraft and selected game control mode must support trim. Esc clears the key.", "Instructor.SaveSetup" => "Save setup", "Instructor.AssignTrimFirst" => "Assign the game's trim key first", "Instructor.StoreConflict" => "Store Trim and Flight Assistant need different bindings. The existing binding was kept.", "Instructor.TrimStored" => "Trim stored. Flight Assistant ON/OFF is unchanged.", "Instructor.Centered" => "All manual trim centered. Flight Assistant Mode remains automatic.", "Instructor.TelemetryTimeout" => "Local telemetry timed out. Check that War Thunder is running in a flight.", "Instructor.TelemetryReadFailed" => "Cannot read 127.0.0.1:8111: {0}", "Instructor.Label.Off" => "OFF", "Instructor.Label.NoOutput" => "NO OUTPUT", "Instructor.Label.GameNotFocused" => "GAME NOT FOCUSED", "Instructor.Label.WaitingForFlight" => "WAITING FOR FLIGHT", "Instructor.Label.LowAirspeed" => "LOW AIRSPEED", "Instructor.Label.Trimming" => "TRIMMING", "Instructor.Label.ReturnToCenter" => "RETURN TO CENTER", "Instructor.Label.ReleaseToTrim" => "RELEASE TO TRIM", "Instructor.Label.CheckHotas" => "CHECK HOTAS", "Instructor.Label.TrimKeyBlocked" => "TRIM KEY BLOCKED", "Instructor.Label.PropOnly" => "PROP PLANES ONLY", "Instructor.Label.BindGameTrim" => "BIND GAME TRIM", "Instructor.Label.Configuring" => "CONFIGURING", "Instructor.Label.ManualTrim" => "MANUAL TRIM", "Instructor.Label.Waiting" => "WAITING", "Instructor.Label.MoveStick" => "MOVE STICK", "Instructor.Label.Paused" => "PAUSED",
             _ => k
         };
@@ -851,6 +867,172 @@ public partial class Form1 : Form
         string code = NormalizeVTrimLanguage(languageCode);
         return code switch
         {
+            "uk" => key switch
+            {
+                "Header.WindowTitle" => "VTrim - Віртуальне тримування для HOTAS і педалей керма",
+                "Header.Title" => "VTrim",
+                "Header.Subtitle" => "Віртуальне тримування для HOTAS і педалей керма",
+                "Header.Description" => "Pitch  •  Roll  •  Rudder\r\nФізичні кнопки залишаються нативними",
+                "Header.Support" => "Купити мені пиво",
+                "Nav.Trim" => "Панель тримування",
+                "Nav.Devices" => "Пристрої та вихід",
+                "Nav.Curves" => "Криві осей",
+                "Nav.Profiles" => "Профілі",
+                "Nav.Native" => "КНОПКИ ЗАЛИШАЮТЬСЯ НАТИВНИМИ",
+                "Common.Listening" => "Очікування...",
+                "Common.Connect" => "Підключити",
+                "Common.Disconnect" => "Відключити",
+                "Common.Cancelled" => "Виявлення скасовано.",
+                "Common.Cancel" => "Скасувати",
+                "Common.NotConfigured" => "Не налаштовано",
+                "Profiles.GameProfiles" => "Ігрові профілі",
+                "Profiles.AircraftType" => "Тип літака",
+                "Profiles.New" => "Новий",
+                "Profiles.Duplicate" => "Дублювати",
+                "Profiles.Rename" => "Перейменувати",
+                "Profiles.Delete" => "Видалити",
+                "Profiles.NewProfile" => "Новий профіль",
+                "Profiles.ProfileName" => "Назва профілю",
+                "Profiles.Create" => "Створити",
+                "Profiles.Contents" => "Вміст профілю",
+                "Profiles.Active" => "Активний профіль: {0}",
+                "Profiles.Temporary" => "Немає (тимчасовий сеанс)",
+                "Profiles.Aircraft" => "Тип літака: {0}",
+                "Profiles.TrimBinds" => "Прив'язки тримування: {0} з {1}",
+                "Profiles.Axes" => "Фізичні осі: налаштовано {0} з {1}",
+                "Dashboard.LiveMonitor" => "Живий монітор",
+                "Dashboard.Legend" => "Рухайте фізичні органи керування. Золотим показано віртуальне тримування, додане VTrim.",
+                "Dashboard.StoreTrim" => "ЗБЕРЕГТИ ТРИМ",
+                "Dashboard.CenterAllTrim" => "ЦЕНТРУВАТИ ВСЕ",
+                "Dashboard.Stick" => "РУЧКА",
+                "Dashboard.RudderYaw" => "ТРИМ RUDDER / YAW",
+                "Dashboard.RudderTrim" => "ТРИМ RUDDER",
+                "Devices.SetupTitle" => "Фізичні пристрої вводу",
+                "Devices.AutoDetect" => "Автовиявлення",
+                "Devices.Refresh" => "Оновити",
+                "Devices.Input" => "Фізичні пристрої вводу",
+                "Devices.NoneDetected" => "Фізичні контролери не виявлено.",
+                "Devices.ConnectThenRefresh" => "Підключіть HOTAS, штурвал, педалі, Xbox/XInput геймпад або інший контролер, потім натисніть Оновити.",
+                "Devices.CountDetected" => "Виявлено фізичних контролерів: {0}.",
+                "Devices.Routing" => "Маршрутизація фізичних осей",
+                "Devices.RecenterAll" => "Центрувати все",
+                "Devices.Recenter" => "Центрувати",
+                "Devices.DetectRoll" => "Виявити Roll",
+                "Devices.DetectPitch" => "Виявити Pitch",
+                "Devices.DetectRudder" => "Виявити Rudder",
+                "Devices.SetupHelp" => "Почніть із нейтрального положення, натисніть Виявити, потім рухайте лише потрібну вісь.",
+                "Curves.Heading" => "Криві осей\r\nГрафік показує фізичний ввід до тримування.",
+                "Curves.Roll" => "Roll",
+                "Curves.Pitch" => "Pitch",
+                "Curves.RudderYaw" => "Rudder / Yaw",
+                "Curves.Curve" => "Крива (-100 до +100)",
+                "Curves.CenterDeadzone" => "Центральна мертва зона (%)",
+                "Curves.InputRange" => "Діапазон вводу (%)",
+                "Curves.OutputRange" => "Діапазон виходу (%)",
+                "Curves.ResetAxis" => "Скинути цю вісь",
+                "Curves.Input" => "Ввід",
+                "Curves.Output" => "Вихід",
+                "Trim.Bindings" => "Прив'язки тримування",
+                "Trim.BindingsHelp" => "Натисніть елемент керування, потім один ввід. Спочатку утримуйте модифікатор, щоб створити комбінацію з двох кнопок.",
+                "Trim.ClickBind" => "Натисніть для прив'язки",
+                "Trim.Center" => "ЦЕНТРУВАТИ ВСЕ",
+                "Trim.Store" => "ЗБЕРЕГТИ ТРИМ",
+                "Trim.Instructor" => "FLIGHT ASSISTANT",
+                "Trim.NoseDown" => "НІС ВНИЗ",
+                "Trim.NoseUp" => "НІС ВГОРУ",
+                "Trim.RollLeft" => "ROLL ЛІВОРУЧ",
+                "Trim.RollRight" => "ROLL ПРАВОРУЧ",
+                "Trim.RudderLeft" => "RUDDER ЛІВОРУЧ",
+                "Trim.RudderRight" => "RUDDER ПРАВОРУЧ",
+                "Sensitivity.Title" => "Чутливість тримування",
+                "Sensitivity.Description" => "Налаштуйте швидкість віртуального тримування та безпечне приймання вводу.",
+                "Sensitivity.HoldSpeed" => "Швидкість утримання",
+                "Sensitivity.UniversalTrigger" => "Універсальний тригер",
+                "Sensitivity.InputGuard" => "Захист вводу",
+                _ => English(key)
+            },
+            "he" => key switch
+            {
+                "Header.WindowTitle" => "VTrim - קיזוז וירטואלי ל-HOTAS ודוושות הגה",
+                "Header.Title" => "VTrim",
+                "Header.Subtitle" => "קיזוז וירטואלי ל-HOTAS ודוושות הגה",
+                "Header.Description" => "Pitch  •  Roll  •  Rudder\r\nהכפתורים הפיזיים נשארים מקוריים",
+                "Header.Support" => "קנו לי בירה",
+                "Nav.Trim" => "לוח Trim",
+                "Nav.Devices" => "התקנים ופלט",
+                "Nav.Curves" => "עקומות צירים",
+                "Nav.Profiles" => "פרופילים",
+                "Nav.Native" => "הכפתורים נשארים NATIVE",
+                "Common.Listening" => "מאזין...",
+                "Common.Connect" => "התחבר",
+                "Common.Disconnect" => "נתק",
+                "Common.Cancelled" => "הזיהוי בוטל.",
+                "Common.Cancel" => "ביטול",
+                "Common.NotConfigured" => "לא מוגדר",
+                "Profiles.GameProfiles" => "פרופילי למשחק",
+                "Profiles.AircraftType" => "סוג כלי טיס",
+                "Profiles.New" => "חדש",
+                "Profiles.Duplicate" => "שכפל",
+                "Profiles.Rename" => "שנה שם",
+                "Profiles.Delete" => "מחק",
+                "Profiles.NewProfile" => "פרופיל חדש",
+                "Profiles.ProfileName" => "שם פרופיל",
+                "Profiles.Create" => "צור",
+                "Profiles.Contents" => "תוכן הפרופיל",
+                "Profiles.Active" => "פרופיל פעיל: {0}",
+                "Profiles.Temporary" => "ללא (הפעלה זמנית)",
+                "Profiles.Aircraft" => "סוג כלי טיס: {0}",
+                "Profiles.TrimBinds" => "הקצאות Trim: {0} מתוך {1}",
+                "Profiles.Axes" => "צירים פיזיים: {0} מתוך {1} מוגדרים",
+                "Dashboard.LiveMonitor" => "תצוגה חיה",
+                "Dashboard.Legend" => "הזז את הבקרות הפיזיות. זהב מציג את ה-Trim הווירטואלי ש-VTrim מוסיף.",
+                "Dashboard.StoreTrim" => "שמור TRIM",
+                "Dashboard.CenterAllTrim" => "מרכז הכול",
+                "Dashboard.Stick" => "STICK",
+                "Dashboard.RudderYaw" => "RUDDER / YAW TRIM",
+                "Devices.SetupTitle" => "התקני קלט פיזיים",
+                "Devices.AutoDetect" => "זיהוי אוטומטי",
+                "Devices.Refresh" => "רענן",
+                "Devices.Input" => "התקני קלט פיזיים",
+                "Devices.NoneDetected" => "לא זוהו בקרים פיזיים.",
+                "Devices.Routing" => "ניתוב צירים פיזיים",
+                "Devices.RecenterAll" => "מרכז הכול מחדש",
+                "Devices.Recenter" => "מרכז מחדש",
+                "Devices.DetectRoll" => "זהה Roll",
+                "Devices.DetectPitch" => "זהה Pitch",
+                "Devices.DetectRudder" => "זהה Rudder",
+                "Curves.Heading" => "עקומות צירים\r\nהגרף מציג את הקלט הפיזי לפני Trim ותיקון Flight Assistant.",
+                "Curves.Roll" => "Roll",
+                "Curves.Pitch" => "Pitch",
+                "Curves.RudderYaw" => "Rudder / Yaw",
+                "Curves.Curve" => "עקומה (-100 עד +100)",
+                "Curves.CenterDeadzone" => "שטח מת מרכזי (%)",
+                "Curves.InputRange" => "טווח קלט (%)",
+                "Curves.OutputRange" => "טווח פלט (%)",
+                "Curves.ResetAxis" => "אפס ציר זה",
+                "Curves.Input" => "קלט",
+                "Curves.Output" => "פלט",
+                "Trim.Bindings" => "הקצאות Trim",
+                "Trim.BindingsHelp" => "לחץ על פקד ואז על קלט אחד. החזק modifier תחילה כדי ליצור צירוף של שני כפתורים.",
+                "Trim.ClickBind" => "לחץ להקצאה",
+                "Trim.Center" => "מרכז הכול",
+                "Trim.Store" => "שמור TRIM",
+                "Trim.Instructor" => "FLIGHT ASSISTANT",
+                "Trim.NoseDown" => "אף למטה",
+                "Trim.NoseUp" => "אף למעלה",
+                "Trim.RollLeft" => "ROLL שמאל",
+                "Trim.RollRight" => "ROLL ימין",
+                "Trim.RudderLeft" => "RUDDER שמאל",
+                "Trim.RudderRight" => "RUDDER ימין",
+                "Sensitivity.Title" => "רגישות Trim",
+                "Sensitivity.Description" => "כוון את מהירות תנועת ה-Trim הווירטואלי ואת בטיחות קליטת הקלט.",
+                "Sensitivity.HoldSpeed" => "מהירות החזקה",
+                "Sensitivity.UniversalTrigger" => "הפעלה אוניברסלית",
+                "Sensitivity.InputGuard" => "הגנת קלט",
+                "Instructor.Off" => "Flight Assistant כבוי. Trim ידני זמין.",
+                "Instructor.PropOnly" => "Flight Assistant זמין רק לפרופילים של מטוסי מדחף.",
+                _ => English(key)
+            },
             "el" => key switch
             {
                 "Header.WindowTitle" => "VTrim - Virtual Trim για HOTAS και πεντάλ rudder",
@@ -913,7 +1095,7 @@ public partial class Form1 : Form
                 "VJoy.StatusDisconnected" => "Virtual έξοδος: αποσυνδεδεμένη",
                 "VJoy.AutoConnect" => "Αυτόματη σύνδεση εξόδου",
                 "VJoy.StartWithWindows" => "Εκκίνηση VTrim με τα Windows, ελαχιστοποιημένο",
-                "VJoy.Description" => "ΡΥΘΜΙΣΗ ΜΕ ΕΝΑ ΚΛΙΚ  ·  Εγκαθιστά το bundled signed vJoy, ρυθμίζει το Device 1 και συνδέει την έξοδο. Τα Windows μπορεί να ζητήσουν δικαιώματα administrator.\r\n\r\nΣτο War Thunder, δέσμευσε Roll / Pitch / Rudder σε vJoy X / Y / Rz. Τα φυσικά HOTAS buttons μένουν native. Τα switch mappings χρησιμοποιούν virtual buttons 1–32.",
+                "VJoy.Description" => "Το SETUP / CONNECT εγκαθιστά ή ρυθμίζει το vJoy Device 1 όταν χρειάζεται και συνδέει το VTrim.\r\nΣτο War Thunder: Roll → vJoy X, Pitch → vJoy Y, Rudder → vJoy Rz. Τα switch mappings χρησιμοποιούν vJoy buttons 1–32.",
                 "Profiles.GameProfiles" => "Προφίλ παιχνιδιού",
                 "Profiles.AircraftType" => "Τύπος αεροσκάφους",
                 "Profiles.New" => "Νέο",
@@ -1024,7 +1206,7 @@ public partial class Form1 : Form
                 "VJoy.StatusDisconnected" => "Ieșire virtuală: deconectată",
                 "VJoy.AutoConnect" => "Conectează ieșirea automat",
                 "VJoy.StartWithWindows" => "Pornește VTrim cu Windows, minimizat",
-                "VJoy.Description" => "CONFIGURARE DINTR-UN CLIC  ·  Instalează vJoy semnat inclus, configurează Device 1 și conectează ieșirea. Windows poate cere acces de administrator.\r\n\r\nÎn War Thunder, leagă Roll / Pitch / Rudder la vJoy X / Y / Rz. Butoanele HOTAS fizice rămân native. Mapările de switch folosesc butoane virtuale 1–32.",
+                "VJoy.Description" => "SETUP / CONNECT instalează sau configurează vJoy Device 1 când este necesar, apoi conectează VTrim.\r\nÎn War Thunder: Roll → vJoy X, Pitch → vJoy Y, Rudder → vJoy Rz. Mapările de switch folosesc butoanele vJoy 1–32.",
                 "Profiles.GameProfiles" => "Profiluri joc",
                 "Profiles.AircraftType" => "Tip aeronavă",
                 "Profiles.New" => "Nou",
@@ -1142,7 +1324,7 @@ public partial class Form1 : Form
             Font = new Font("Segoe UI Semibold", 20F),
             ForeColor = Theme.Text,
             TextAlign = ContentAlignment.MiddleLeft,
-            AutoEllipsis = false,
+            AutoEllipsis = true,
             UseMnemonic = false
         }, "Header.Title");
 
@@ -1154,20 +1336,10 @@ public partial class Form1 : Form
             ForeColor = Theme.AccentLight,
             Padding = new Padding(2, 0, 0, 0),
             TextAlign = ContentAlignment.MiddleLeft,
-            AutoEllipsis = false,
+            AutoEllipsis = true,
             UseMnemonic = false
         }, "Header.Subtitle");
 
-        var description = I18n(new Label
-        {
-            Dock = DockStyle.Fill,
-            Margin = new Padding(14, 4, 14, 4),
-            Font = new Font("Segoe UI", 8.4F),
-            ForeColor = Theme.Muted,
-            TextAlign = ContentAlignment.MiddleRight,
-            AutoEllipsis = false,
-            UseMnemonic = false
-        }, "Header.Description");
 
         var beerButton = I18n(CreateBeerButton("Buy me a Beer"), "Header.Support");
         beerButton.Dock = DockStyle.Fill;
@@ -1180,8 +1352,6 @@ public partial class Form1 : Form
         header.SetRowSpan(logo, 2);
         header.Controls.Add(title, 1, 0);
         header.Controls.Add(subtitle, 1, 1);
-        header.Controls.Add(description, 2, 0);
-        header.SetRowSpan(description, 2);
         header.Controls.Add(beerButton, 3, 0);
         header.SetRowSpan(beerButton, 2);
 
@@ -1459,7 +1629,7 @@ public partial class Form1 : Form
             Cursor = Cursors.Hand,
             TextAlign = ContentAlignment.MiddleCenter,
             UseMnemonic = false,
-            AutoEllipsis = false
+            AutoEllipsis = true
         };
 
         button.FlatAppearance.BorderSize = 0;
@@ -1499,11 +1669,23 @@ public partial class Form1 : Form
     {
         _profileBox = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList,
             BackColor = Theme.Control, ForeColor = Theme.Text, FlatStyle = FlatStyle.Flat, FormattingEnabled = true };
-        _profileBox.Format += (_, e) => e.Value = AircraftSearchService.CleanName(e.ListItem?.ToString());
+        _profileBox.Format += (_, e) =>
+        {
+            string? raw = e.ListItem?.ToString();
+            e.Value = string.Equals(raw, DefaultProfileDisplayName, StringComparison.OrdinalIgnoreCase)
+                ? VT("Profiles.DefaultProfile")
+                : AircraftSearchService.CleanName(raw);
+        };
         _profileBox.SelectedIndexChanged += (_, _) =>
         {
-            if (!_switchingProfile && !_loadingSavedSettings && _profileBox.SelectedItem is string name &&
-                !string.Equals(name, _activeProfileName, StringComparison.OrdinalIgnoreCase)) SwitchProfile(name);
+            if (_switchingProfile || _loadingSavedSettings || _profileBox.SelectedItem is not string name) return;
+            if (string.Equals(name, DefaultProfileDisplayName, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!string.IsNullOrWhiteSpace(_activeProfileName)) SwitchToDefaultProfile();
+                _openTrimDashboard?.Invoke();
+                return;
+            }
+            if (!string.Equals(name, _activeProfileName, StringComparison.OrdinalIgnoreCase)) SwitchProfile(name);
         };
         // Retain flight-type compatibility in saved setups, without the retired type selector.
         _profileTypeBox = new ProfileTypeComboBox();
@@ -1516,9 +1698,10 @@ public partial class Form1 : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        layout.Controls.Add(new Label { Text = "Game profiles", Dock = DockStyle.Fill, ForeColor = Theme.Text }, 0, 0);
+        layout.Controls.Add(I18n(new Label { Dock = DockStyle.Fill, ForeColor = Theme.Text }, "Profiles.GameProfiles"), 0, 0);
         layout.Controls.Add(_profileBox, 0, 1);
         layout.Controls.Add(CreateAircraftProfileBrowser(false), 0, 2);
+        RegisterProfilesPage(parent, layout);
         parent.Controls.Add(layout);
     }
 
@@ -1536,17 +1719,24 @@ public partial class Form1 : Form
             return;
         }
 
+        SaveBindings();
+        PreserveManualProfileSelection();
         _profileAircraftId = aircraftId;
+        _profileDetectedAircraftKey = null;
         _profileId = Guid.NewGuid().ToString("D");
 
-        // Save the CURRENT session into the new profile. This is especially
-        // useful on a fresh install: configure VTrim first, then create the
-        // profile when you are ready to keep those settings.
-        SavedBindingsFile profile =
-            CaptureCurrentProfile();
-
-        profile.ProfileName =
-            profileName;
+        // New aircraft start in Default Controls mode. The user can double-click
+        // the aircraft card and opt into a private Custom Controls snapshot.
+        SavedBindingsFile profile = ReadDefaultProfileTemplate();
+        profile.Id = _profileId;
+        profile.Version = 13;
+        profile.ProfileName = profileName;
+        profile.AircraftId = aircraftId;
+        profile.AircraftType = _aircraftDatabase?.GetById(aircraftId)?.FlightCategory ?? "Prop Plane";
+        profile.UseCustomControls = false;
+        profile.HasCustomControlsSnapshot = false;
+        profile.DampingSupport = DampingUnknown;
+        profile.InstructorModeEnabled = false;
 
         _activeProfileName =
             profileName;
@@ -1554,12 +1744,13 @@ public partial class Form1 : Form
         WriteProfile(
             profileName,
             profile);
+        ApplySavedProfile(PrepareAircraftProfileForRuntime(profile));
 
         WriteActiveProfileName();
         RefreshProfileList();
 
         SetInstruction(
-            $"Created and saved profile: {profileName}.",
+            VF("Profiles.Created", profileName),
             Theme.Success);
     }
 
@@ -1571,13 +1762,13 @@ public partial class Form1 : Form
         string baseName =
             string.IsNullOrWhiteSpace(
                 _activeProfileName)
-                ? "New Profile"
-                : $"{_activeProfileName} Copy";
+                ? VT("Profiles.NewProfile")
+                : VF("Profiles.CopyName", _activeProfileName);
 
         string? requestedName =
             PromptForProfileName(
-                "Duplicate Profile",
-                "Name for the duplicate:",
+                VT("Profiles.DuplicateTitle"),
+                VT("Profiles.DuplicatePrompt"),
                 GetUniqueProfileName(
                     baseName));
 
@@ -1591,6 +1782,9 @@ public partial class Form1 : Form
         currentProfile.ProfileName =
             profileName;
         currentProfile.Id = Guid.NewGuid().ToString("D");
+        // A manual duplicate must not compete with the original aircraft for
+        // automatic telemetry selection until the user explicitly links it.
+        currentProfile.DetectedAircraftKey = null;
         _profileId = currentProfile.Id;
 
         WriteProfile(
@@ -1604,7 +1798,7 @@ public partial class Form1 : Form
         RefreshProfileList();
 
         SetInstruction(
-            $"Saved current setup as: {profileName}.",
+            VF("Profiles.SavedAs", profileName),
             Theme.Success);
     }
 
@@ -1615,8 +1809,8 @@ public partial class Form1 : Form
         {
             MessageBox.Show(
                 this,
-                "There is no saved profile to rename. Create a profile first.",
-                "VTrim Profiles",
+                VT("Profiles.NothingToRename"),
+                VT("Profiles.WindowTitle"),
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
 
@@ -1625,8 +1819,8 @@ public partial class Form1 : Form
 
         string? requestedName =
             PromptForProfileName(
-                "Rename Profile",
-                "New profile name:",
+                VT("Profiles.RenameTitle"),
+                VT("Profiles.RenamePrompt"),
                 _activeProfileName);
 
         if (string.IsNullOrWhiteSpace(
@@ -1683,7 +1877,7 @@ public partial class Form1 : Form
         RefreshProfileList();
 
         SetInstruction(
-            $"Profile renamed to: {profileName}.",
+            VF("Profiles.Renamed", profileName),
             Theme.Success);
     }
 
@@ -1698,8 +1892,8 @@ public partial class Form1 : Form
         DialogResult result =
             MessageBox.Show(
                 this,
-                $"Delete profile \"{_activeProfileName}\"?",
-                "Delete Profile",
+                VF("Profiles.DeleteQuestion", _activeProfileName),
+                VT("Profiles.DeleteTitle"),
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Warning,
                 MessageBoxDefaultButton.Button2);
@@ -1716,27 +1910,21 @@ public partial class Form1 : Form
             GetProfileFilePath(
                 deletedName);
 
-        if (File.Exists(profilePath))
-        {
-            File.Delete(profilePath);
-        }
+        PreserveManualProfileSelection();
+        // Backups must not reserve a deleted name or restore a deleted profile.
+        foreach (string path in new[] { profilePath, profilePath + ".bak", profilePath + ".pre-1.3.1.bak" })
+            if (File.Exists(path)) File.Delete(path);
 
         List<string> remainingProfiles =
             GetProfileNames();
 
         if (remainingProfiles.Count == 0)
         {
-            // Deleting the last profile is valid. Return to a completely
-            // unsaved/clean temporary session.
+            // Restore the saved default template, never a blank temporary setup.
             _activeProfileName =
                 string.Empty;
 
-            ApplySavedProfile(
-                new SavedBindingsFile
-                {
-                    ProfileName =
-                        string.Empty
-                });
+            ApplySavedProfile(ReadDefaultProfileTemplate());
 
             DeleteActiveProfilePointer();
         }
@@ -1750,7 +1938,7 @@ public partial class Form1 : Form
                     _activeProfileName);
 
             ApplySavedProfile(
-                profile);
+                PrepareAircraftProfileForRuntime(profile));
 
             WriteActiveProfileName();
         }
@@ -1758,11 +1946,11 @@ public partial class Form1 : Form
         RefreshProfileList();
 
         SetInstruction(
-            $"Deleted profile: {deletedName}.",
+            VF("Profiles.Deleted", deletedName),
             Theme.Warning);
     }
 
-    private void SwitchProfile(string profileName)
+    private void SwitchProfile(string profileName, bool refreshProfileUi = true)
     {
         if (string.IsNullOrWhiteSpace(
                 profileName))
@@ -1770,23 +1958,36 @@ public partial class Form1 : Form
             return;
         }
 
+        if (_switchingProfile || !ProfileExists(profileName)) return;
+        PreserveManualProfileSelection();
         SaveBindings();
-
-        _activeProfileName =
-            profileName;
-
-        SavedBindingsFile profile =
-            ReadProfile(
-                profileName);
+        // Resolve the target before changing the active identity.
+        SavedBindingsFile profile = ReadProfile(profileName);
+        _activeProfileName = profileName;
 
         ApplySavedProfile(
-            profile);
+            PrepareAircraftProfileForRuntime(profile));
 
         WriteActiveProfileName();
-        RefreshProfileList();
+        if (refreshProfileUi)
+        {
+            RefreshProfileList();
+        }
+        else
+        {
+            // Aircraft-card clicks must not destroy/recreate the clicked card before
+            // WinForms can deliver the second click of a double-click gesture.
+            if (_profileBox is not null)
+            {
+                _switchingProfile = true;
+                try { _profileBox.SelectedItem = profileName; }
+                finally { _switchingProfile = false; }
+            }
+            UpdateProfileSummary();
+        }
 
         SetInstruction(
-            $"Active profile: {profileName}.",
+            VF("Profiles.ActiveInstruction", profileName),
             Theme.Success);
     }
 
@@ -1807,6 +2008,9 @@ public partial class Form1 : Form
         {
             _profileBox.BeginUpdate();
             _profileBox.Items.Clear();
+            // The Default Profile is the template for any aircraft created
+            // automatically from War Thunder telemetry and is always pinned first.
+            _profileBox.Items.Add(DefaultProfileDisplayName);
 
             foreach (string profileName in profileNames)
             {
@@ -1814,9 +2018,11 @@ public partial class Form1 : Form
                     profileName);
             }
 
-            if (!string.IsNullOrWhiteSpace(
-                    _activeProfileName) &&
-                profileNames.Any(
+            if (string.IsNullOrWhiteSpace(_activeProfileName))
+            {
+                _profileBox.SelectedItem = DefaultProfileDisplayName;
+            }
+            else if (profileNames.Any(
                     name =>
                         string.Equals(
                             name,
@@ -1828,8 +2034,7 @@ public partial class Form1 : Form
             }
             else
             {
-                _profileBox.SelectedIndex =
-                    -1;
+                _profileBox.SelectedItem = DefaultProfileDisplayName;
             }
 
             _profileBox.EndUpdate();
@@ -1844,6 +2049,7 @@ public partial class Form1 : Form
 
     private void UpdateProfileSummary()
     {
+        AircraftProfileSelectionChanged?.Invoke();
         if (_activeProfileLabel is null ||
             _profileSummaryLabel is null)
         {
@@ -1862,7 +2068,7 @@ public partial class Form1 : Form
         _activeProfileLabel.Text =
             hasActiveProfile
                 ? string.Format(CultureInfo.CurrentCulture, VT("Profiles.Active"), _activeProfileName)
-                : "Default setup";
+                : VT("Profiles.DefaultProfile");
 
         _activeProfileLabel.ForeColor =
             hasActiveProfile
@@ -1884,7 +2090,7 @@ public partial class Form1 : Form
             string.Format(CultureInfo.CurrentCulture, VT("Profiles.Rudder"), _rudderAxis?.DisplayName ?? notConfigured) + "\r\n\r\n" +
             (hasActiveProfile
                 ? VT("Profiles.Saved") + "\r\n"
-                : "Default setup saved automatically." + "\r\n") +
+                : VT("Profiles.DefaultTemplateSummary") + "\r\n") +
             VT("Profiles.Files");
 
         if (_deleteProfileButton is not null)
@@ -1922,6 +2128,13 @@ public partial class Form1 : Form
             return false;
         }
 
+        if (string.Equals(profileName, DefaultProfileDisplayName, StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show(this, VF("Profiles.ReservedDefault", VT("Profiles.DefaultProfile")),
+                VT("Profiles.WindowTitle"), MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return false;
+        }
+
         if (ProfileExists(profileName))
         {
             ShowProfileExistsMessage(
@@ -1938,8 +2151,8 @@ public partial class Form1 : Form
     {
         MessageBox.Show(
             this,
-            $"A profile named \"{profileName}\" already exists.",
-            "VTrim Profiles",
+            VF("Profiles.Exists", profileName),
+            VT("Profiles.WindowTitle"),
             MessageBoxButtons.OK,
             MessageBoxIcon.Information);
     }
@@ -2060,7 +2273,7 @@ public partial class Form1 : Form
         };
 
         Button cancelButton =
-            CreateSecondaryButton("Cancel");
+            CreateSecondaryButton(VT("Common.Cancel"));
 
         cancelButton.Size =
             new Size(112, 38);
@@ -2072,7 +2285,7 @@ public partial class Form1 : Form
             DialogResult.Cancel;
 
         Button okButton =
-            CreatePrimaryButton("OK");
+            CreatePrimaryButton(VT("Common.OK"));
 
         okButton.Size =
             new Size(112, 38);
@@ -2216,21 +2429,21 @@ public partial class Form1 : Form
         panel.Dock = DockStyle.Fill;
         var layout = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3,
+            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2,
             Margin = Padding.Empty, Padding = new Padding(16, 12, 16, 14),
             BackColor = Theme.Panel
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 84F));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 64F));
+
         var heading = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 2,
+            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2,
             Margin = new Padding(0, 2, 0, 2), BackColor = Theme.Panel
         };
-        for (int i = 0; i < 3; i++)
-            heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.333F));
+        heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+        heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
         heading.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F));
         heading.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
         var title = I18n(new Label
@@ -2248,74 +2461,51 @@ public partial class Form1 : Form
         }, "Dashboard.Legend");
         heading.Controls.Add(title, 0, 0);
         heading.Controls.Add(legend, 1, 0);
-        heading.SetColumnSpan(legend, 2);
-        _instructorModeButton = CreateSecondaryButton(VT("Dashboard.InstructorOff"));
-        _instructorModeButton.Click += (_, _) => ApplyTrimAction(TrimAction.ToggleInstructor);
+
         _storeTrimButton = I18n(CreateSecondaryButton("Store Trim"), "Dashboard.StoreTrim");
         _storeTrimButton.BackColor = Theme.RudderControl;
         _storeTrimButton.FlatAppearance.BorderColor = Theme.RudderBorder;
         _storeTrimButton.Click += (_, _) => ApplyTrimAction(TrimAction.StoreCurrentTrim);
         Button reset = I18n(CreateResetButton("Center All Trim"), "Dashboard.CenterAllTrim");
         reset.Click += (_, _) => ApplyTrimAction(TrimAction.ResetAll);
-        Button[] actions = { _instructorModeButton, _storeTrimButton, reset };
-        for (int i = 0; i < actions.Length; i++)
-        {
-            actions[i].Dock = DockStyle.Fill;
-            actions[i].Margin = new Padding(i == 0 ? 0 : 5, 4, i == 2 ? 0 : 5, 6);
-            heading.Controls.Add(actions[i], i, 1);
-        }
-        _toolTip.SetToolTip(_instructorModeButton,
-            "Toggle pitch attitude hold and pitch-rate dampening.");
-        _toolTip.SetToolTip(_storeTrimButton,
-            "Capture the current curved stick/pedal command as trim, then return controls to center. During armed Horizontal Assist calibration this captures calibration only.");
-        _toolTip.SetToolTip(reset,
-            VT("Instructor.TrimStored"));
+        _storeTrimButton.Dock = reset.Dock = DockStyle.Fill;
+        _storeTrimButton.Margin = new Padding(0, 4, 5, 6);
+        reset.Margin = new Padding(5, 4, 0, 6);
+        heading.Controls.Add(_storeTrimButton, 0, 1);
+        heading.Controls.Add(reset, 1, 1);
+        _toolTip.SetToolTip(_storeTrimButton, VT("Dashboard.StoreTrimTip"));
+        _toolTip.SetToolTip(reset, VT("Instructor.TrimStored"));
+
         var content = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1,
+            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1,
             Margin = Padding.Empty, BackColor = Theme.Panel
         };
-        content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36F));
-        content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 32F));
-        content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 32F));
+        content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 48F));
+        content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 52F));
         content.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
         Control values = CreateTrimValuesCard();
         Control stick = CreateStickPreviewCard();
         Control rudder = CreateRudderPreviewCard();
         values.Margin = new Padding(0, 0, 5, 0);
-        stick.Margin = new Padding(5, 0, 5, 0);
-        rudder.Margin = new Padding(0, 6, 0, 0);
         var axes = new TableLayoutPanel
         {
             Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2,
-            Margin = new Padding(5, 0, 5, 0), BackColor = Theme.Panel
+            Margin = new Padding(5, 0, 0, 0), BackColor = Theme.Panel
         };
         axes.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         axes.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         axes.RowStyles.Add(new RowStyle(SizeType.Absolute, 90));
         stick.Margin = Padding.Empty;
+        rudder.Margin = new Padding(0, 6, 0, 0);
         axes.Controls.Add(stick, 0, 0);
         axes.Controls.Add(rudder, 0, 1);
-        Control instructorStrip = CreateInstructorStrip();
         content.Controls.Add(values, 0, 0);
         content.Controls.Add(axes, 1, 0);
-        var instructorControls = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3,
-            Margin = new Padding(5, 0, 0, 0), BackColor = Theme.Panel
-        };
-        instructorControls.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        instructorControls.RowStyles.Add(new RowStyle(SizeType.Absolute, Math.Max(28, Font.Height + 12) * 5 + 8));
-        instructorControls.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
-        instructorControls.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        instructorControls.Controls.Add(_instructorLive!, 0, 0);
-        instructorControls.Controls.Add(_instructorSettingsButton!, 0, 1);
-        content.Controls.Add(instructorControls, 2, 0);
+
         layout.Controls.Add(heading, 0, 0);
         layout.Controls.Add(content, 0, 1);
-        layout.Controls.Add(instructorStrip, 0, 2);
         panel.Controls.Add(layout);
-        UpdateInstructorModeUi();
         return panel;
     }
 
@@ -2587,7 +2777,8 @@ public partial class Form1 : Form
 
         var assistTitle = new Label
         {
-            Text = "Horizontal Assist",
+            Text = VT("Horizontal.Title"),
+            Tag = "i18n:Horizontal.Title",
             Dock = DockStyle.Fill,
             Margin = Padding.Empty,
             Font = new Font(
@@ -2639,7 +2830,8 @@ public partial class Form1 : Form
 
         var compensationTitle = new Label
         {
-            Text = "Roll Gain",
+            Text = VT("Horizontal.RollGain"),
+            Tag = "i18n:Horizontal.RollGain",
             Dock = DockStyle.Fill,
             Margin = Padding.Empty,
             Font = new Font(
@@ -2697,7 +2889,8 @@ public partial class Form1 : Form
 
         var pitchCompensationTitle = new Label
         {
-            Text = "Pitch Gain",
+            Text = VT("Horizontal.PitchGain"),
+            Tag = "i18n:Horizontal.PitchGain",
             Dock = DockStyle.Fill,
             Margin = Padding.Empty,
             Font = new Font(
@@ -2755,7 +2948,8 @@ public partial class Form1 : Form
 
         _horizontalRudderCalibrateButton =
             CreateSecondaryButton(
-                "CALIB");
+                VT("Horizontal.Calibrate"));
+        _horizontalRudderCalibrateButton.Tag = "i18n:Horizontal.Calibrate";
 
         _horizontalRudderCalibrateButton.Dock =
             DockStyle.Fill;
@@ -2776,7 +2970,7 @@ public partial class Form1 : Form
             new Label
             {
                 Text =
-                    "READY",
+                    VT("Horizontal.Ready"),
                 Dock = DockStyle.Fill,
                 Margin = new Padding(4, 3, 0, 0),
                 Font = new Font(
@@ -2849,23 +3043,23 @@ public partial class Form1 : Form
 
         _toolTip.SetToolTip(
             assistTitle,
-            "Adds calibrated Roll and Pitch correction as Rudder trim increases.");
+            VT("Horizontal.TitleTip"));
 
         _toolTip.SetToolTip(
             _horizontalRudderAssistBox,
-            "Helps hold the aircraft attitude while Rudder trim moves the aircraft sideways.");
+            VT("Horizontal.EnableTip"));
 
         _toolTip.SetToolTip(
             _rudderRollCompensationSlider,
-            "0% = no automatic Roll. 100% = one-for-one Roll gain. Calibration learns the required Roll direction.");
+            VT("Horizontal.RollGainTip"));
 
         _toolTip.SetToolTip(
             _rudderPitchCompensationSlider,
-            "0% = no automatic Pitch. 100% = one-for-one Pitch gain. Calibration learns the required Pitch direction.");
+            VT("Horizontal.PitchGainTip"));
 
         _toolTip.SetToolTip(
             _horizontalRudderCalibrateButton,
-            "Arm one-shot calibration. Hold Rudder and hold the stick at the exact Roll + Pitch position that keeps the aircraft steady, then press STORE TRIM once.");
+            VT("Horizontal.CalibrateTip"));
 
         return panel;
     }
@@ -2918,7 +3112,7 @@ public partial class Form1 : Form
             Font = new Font("Segoe UI", 10.5F),
             ForeColor = Theme.Muted,
             AutoSize = false,
-            AutoEllipsis = false,
+            AutoEllipsis = true,
             UseMnemonic = false
         };
 
@@ -2955,8 +3149,6 @@ public partial class Form1 : Form
         Button noseDown = CreateBindingButton(TrimAction.NoseDown);
         Button rollLeft = CreateBindingButton(TrimAction.RollLeft);
         Button reset = CreateBindingButton(TrimAction.ResetAll);
-        Button instructorMode = CreateBindingButton(TrimAction.ToggleInstructor);
-        _instructorBindingButton = instructorMode;
         Button storeTrim = CreateBindingButton(TrimAction.StoreCurrentTrim);
         Button rollRight = CreateBindingButton(TrimAction.RollRight);
         Button noseUp = CreateBindingButton(TrimAction.NoseUp);
@@ -2968,7 +3160,6 @@ public partial class Form1 : Form
                      noseDown,
                      rollLeft,
                      reset,
-                     instructorMode,
                      storeTrim,
                      rollRight,
                      noseUp
@@ -2984,7 +3175,6 @@ public partial class Form1 : Form
         grid.Controls.Add(reset, 1, 1);
         grid.Controls.Add(rollRight, 2, 1);
         grid.Controls.Add(storeTrim, 1, 2);
-        grid.Controls.Add(instructorMode, 2, 2);
         grid.Controls.Add(noseUp, 1, 3);
 
         var rudderSection = new TableLayoutPanel
@@ -3054,11 +3244,13 @@ public partial class Form1 : Form
         };
 
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 78F));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 68F));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 104F));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 68F));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 72F));
+        // Do not let three tiny value editors stretch to fill hundreds of
+        // pixels on tall windows; keep their visual weight proportional.
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 156F));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 58F));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 92F));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 58F));
 
         var heading = new Panel
         {
@@ -3112,7 +3304,7 @@ public partial class Form1 : Form
 
         for (int row = 0; row < 3; row++)
         {
-            grid.RowStyles.Add(new RowStyle(SizeType.Percent, 33.333F));
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 50F));
         }
 
         _pitchStepBox = AddStepRow(grid, 0, "Pitch", 0.50M);
@@ -3178,11 +3370,11 @@ public partial class Form1 : Form
 
         _toolTip.SetToolTip(
             speedTitle,
-            "Controls how quickly trim changes while a trim control is held.");
+            VT("Sensitivity.HoldSpeedTip"));
 
         _toolTip.SetToolTip(
             _repeatSpeedSlider,
-            "Left = slower trim movement. Right = faster trim movement.");
+            VT("Sensitivity.HoldSpeedSliderTip"));
 
         speedPanel.Controls.Add(speedTitle, 0, 0);
         speedPanel.Controls.Add(_repeatSpeedValueLabel, 1, 0);
@@ -3311,23 +3503,19 @@ public partial class Form1 : Form
 
         _toolTip.SetToolTip(
             unassignedGuardDescription,
-            "ON: the first game/modifier button locks the chord context.\r\n" +
-            "Trim triggers such as POV Up cannot override a game button that was pressed first.\r\n" +
-            "A configured VTrim modifier/lever can override an old latching game switch.\r\n" +
-            "OFF: unassigned buttons are ignored completely.");
+            VT("Sensitivity.InputGuardTip"));
 
         _toolTip.SetToolTip(
             _unassignedInputGuardBox,
-            "Chord Lock keeps Trigger 1 + POV Up native to the game, while a configured VTrim modifier can still take control from a latched switch.");
+            VT("Sensitivity.InputGuardButtonTip"));
 
         _toolTip.SetToolTip(
             triggerModeDescription,
-            "ON: unassigned directions can still activate normal single trim bindings while a configured modifier is held.\r\n" +
-            "OFF: holding any configured modifier blocks all standalone trim bindings.");
+            VT("Sensitivity.UniversalTriggerTip"));
 
         _toolTip.SetToolTip(
             _universalTriggerBox,
-            "OFF is isolated mode: a held modifier reserves the POV/buttons for combinations only.");
+            VT("Sensitivity.UniversalTriggerButtonTip"));
 
         var footer = new TableLayoutPanel
         {
@@ -3387,8 +3575,7 @@ public partial class Form1 : Form
 
         _toolTip.SetToolTip(
             _repeatWhileHeldBox,
-            "ON: holding a trim input moves trim smoothly at the selected % per second.\r\n" +
-            "OFF: each press changes trim exactly once by the configured tap step.");
+            VT("Sensitivity.RepeatTip"));
 
         var hint = I18n(new Label
         {
@@ -3437,7 +3624,7 @@ public partial class Form1 : Form
             UpdateHorizontalRudderAssistUi();
 
             SetInstruction(
-                "Horizontal Assist calibration cancelled.",
+                VT("Horizontal.CancelledInstruction"),
                 Theme.Muted);
 
             return;
@@ -3453,7 +3640,7 @@ public partial class Form1 : Form
             UpdateHorizontalRudderAssistUi();
 
             SetInstruction(
-                "Configure Roll, Pitch and Rudder axes before calibrating Horizontal Assist.",
+                VT("Horizontal.ConfigureAxesInstruction"),
                 Theme.Error);
 
             return;
@@ -3461,7 +3648,7 @@ public partial class Form1 : Form
 
         if (_storeTrimReturn.AnyWaiting)
         {
-            SetInstruction("Return the stick and pedals to center before arming calibration.", Theme.Warning);
+            SetInstruction(VT("Horizontal.CenterBeforeArm"), Theme.Warning);
             return;
         }
         ResetAutomaticInstructorHold();
@@ -3478,7 +3665,7 @@ public partial class Form1 : Form
         UpdateHorizontalRudderAssistUi();
 
         SetInstruction(
-            "Horizontal Assist calibration armed. In-game, hold the Rudder amount you want to test and hold the stick at the exact Roll AND Pitch position that keeps the aircraft steady. Press STORE TRIM once to teach VTrim both corrections.",
+            VT("Horizontal.ArmedInstruction"),
             Theme.Warning);
     }
 
@@ -3510,7 +3697,7 @@ public partial class Form1 : Form
             UpdateHorizontalRudderAssistUi();
 
             SetInstruction(
-                "Calibration not captured: use at least about 8% Rudder, hold the aircraft steady with Roll and Pitch, then press STORE TRIM again.",
+                VT("Horizontal.NeedsRudder"),
                 Theme.Warning);
 
             return false;
@@ -3599,16 +3786,16 @@ public partial class Form1 : Form
 
         string rollDirection =
             _rudderRollCompensationDirection > 0
-                ? "same"
-                : "opposite";
+                ? VT("Horizontal.DirectionSame")
+                : VT("Horizontal.DirectionOpposite");
 
         string pitchDirection =
             _rudderPitchCompensationDirection > 0
-                ? "same"
-                : "opposite";
+                ? VT("Horizontal.DirectionSame")
+                : VT("Horizontal.DirectionOpposite");
 
         SetInstruction(
-            $"Horizontal Assist calibrated: Roll {calibratedRollPercent}% ({rollDirection} direction), Pitch {calibratedPitchPercent}% ({pitchDirection} direction). More Rudder trim now adds both corrections proportionally. STORE TRIM did not change aircraft trim.",
+            VF("Horizontal.CalibratedInstruction", calibratedRollPercent, rollDirection, calibratedPitchPercent, pitchDirection),
             Theme.Success);
 
         return true;
@@ -3675,6 +3862,15 @@ public partial class Form1 : Form
             95.0);
     }
 
+    private string VTrimCalibrationStatus(string? status) => status switch
+    {
+        "ARMED" => VT("Horizontal.Armed"),
+        "CALIBRATED" => VT("Horizontal.Calibrated"),
+        "CHECK AXES" => VT("Horizontal.CheckAxes"),
+        "MORE RUDDER" => VT("Horizontal.MoreRudder"),
+        _ => VT("Horizontal.Ready")
+    };
+
     private void UpdateHorizontalRudderAssistUi()
     {
         if (_horizontalRudderAssistBox is null ||
@@ -3691,8 +3887,8 @@ public partial class Form1 : Form
 
         _horizontalRudderAssistBox.Text =
             enabled
-                ? "ON"
-                : "OFF";
+                ? VT("Common.On")
+                : VT("Common.Off");
 
         _horizontalRudderAssistBox.BackColor =
             enabled
@@ -3743,8 +3939,8 @@ public partial class Form1 : Form
         {
             _horizontalRudderCalibrateButton.Text =
                 _horizontalRudderCalibrationArmed
-                    ? "CANCEL"
-                    : "CALIB";
+                    ? VT("Common.Cancel")
+                    : VT("Horizontal.Calibrate");
 
             _horizontalRudderCalibrateButton.BackColor =
                 _horizontalRudderCalibrationArmed
@@ -3772,8 +3968,8 @@ public partial class Form1 : Form
             _horizontalRudderCalibrationStatusLabel.Text =
                 !string.IsNullOrWhiteSpace(
                     _horizontalRudderCalibrationMessage)
-                    ? _horizontalRudderCalibrationMessage
-                    : "READY";
+                    ? VTrimCalibrationStatus(_horizontalRudderCalibrationMessage)
+                    : VT("Horizontal.Ready");
 
             _horizontalRudderCalibrationStatusLabel.ForeColor =
                 _horizontalRudderCalibrationArmed
@@ -4194,7 +4390,7 @@ public partial class Form1 : Form
                     device.FriendlyName;
 
                 _deviceStatusLabel.Text =
-                    $"Selected: {device.FriendlyName}";
+                    string.Format(CultureInfo.CurrentCulture, VT("Devices.Selected"), device.FriendlyName);
 
                 _deviceStatusLabel.ForeColor =
                     Theme.Success;
@@ -4246,7 +4442,8 @@ public partial class Form1 : Form
         _deviceStatusLabel = new Label
         {
             Text =
-                "Searching for DirectInput devices...",
+                VT("Devices.Searching"),
+            Tag = "i18n:Devices.Searching",
             Dock = DockStyle.Fill,
             Margin = Padding.Empty,
             AutoEllipsis = false,
@@ -4469,7 +4666,7 @@ public partial class Form1 : Form
         AddAxisMappingRow(
             grid,
             1,
-            "Roll",
+            VT("Curves.Roll"),
             _rollAxisLabel,
             _rollAxisButton,
             _invertRollBox,
@@ -4478,7 +4675,7 @@ public partial class Form1 : Form
         AddAxisMappingRow(
             grid,
             2,
-            "Pitch",
+            VT("Curves.Pitch"),
             _pitchAxisLabel,
             _pitchAxisButton,
             _invertPitchBox,
@@ -4487,7 +4684,7 @@ public partial class Form1 : Form
         AddAxisMappingRow(
             grid,
             3,
-            "Rudder",
+            VT("Curves.RudderYaw"),
             _rudderAxisLabel,
             _rudderAxisButton,
             _invertRudderBox,
@@ -4495,8 +4692,8 @@ public partial class Form1 : Form
 
         var help = new Label
         {
-            Text =
-                "Start from neutral, click Detect, then move only the requested axis.",
+            Text = VT("Devices.SetupHelp"),
+            Tag = "i18n:Devices.SetupHelp",
             Dock = DockStyle.Fill,
             Margin = Padding.Empty,
             Font = new Font("Segoe UI", 11F),
@@ -4610,7 +4807,7 @@ public partial class Form1 : Form
             Margin = Padding.Empty,
             ForeColor = Theme.Muted,
             TextAlign = ContentAlignment.MiddleLeft,
-            AutoEllipsis = false,
+            AutoEllipsis = true,
             UseMnemonic = false
         };
 
@@ -4692,7 +4889,7 @@ public partial class Form1 : Form
             ResetForeignChordSuppression();
             UpdateBindingButton(action);
             SaveBindings();
-            SetInstruction($"{GetActionName(action)} binding cleared and saved.", Theme.Warning);
+            SetInstruction(VF("Trim.BindingCleared", GetActionName(action)), Theme.Warning);
         };
 
         _bindingButtons[action] = button;
@@ -4705,7 +4902,7 @@ public partial class Form1 : Form
     {
         if (_devices.Count == 0)
         {
-            SetStatus("No physical DirectInput devices are available.", Theme.Error);
+            SetStatus(VT("Devices.NoPhysicalDevices"), Theme.Error);
             return;
         }
 
@@ -4718,7 +4915,7 @@ public partial class Form1 : Form
         _captureFirstInput = null;
 
         SetInstruction(
-            $"Binding {GetActionName(action)}: press one input and release it, or hold it and press a second input.",
+            VF("Trim.BindingPrompt", GetActionName(action)),
             Theme.AccentLight);
     }
 
@@ -4726,7 +4923,7 @@ public partial class Form1 : Form
     {
         if (_devices.Count == 0)
         {
-            SetStatus("No physical DirectInput devices are available.", Theme.Error);
+            SetStatus(VT("Devices.NoPhysicalDevices"), Theme.Error);
             return;
         }
 
@@ -4739,7 +4936,7 @@ public partial class Form1 : Form
         _autoDetectDeviceButton.BackColor = Theme.Warning;
 
         SetInstruction(
-            "Press a button or POV direction on the controller you want to select. Press Escape to cancel.",
+            VT("Devices.SelectDeviceInstruction"),
             Theme.AccentLight);
     }
 
@@ -4747,7 +4944,7 @@ public partial class Form1 : Form
     {
         if (_devices.Count == 0)
         {
-            SetStatus("No physical DirectInput devices are available.", Theme.Error);
+            SetStatus(VT("Devices.NoPhysicalDevices"), Theme.Error);
             return;
         }
 
@@ -4775,8 +4972,45 @@ public partial class Form1 : Form
         SetAxisDetectButtonState(target, listening: true);
 
         SetInstruction(
-            $"Detecting {target}: start from neutral, then move only that axis through a clear movement.",
+            VF("Devices.DetectingAxis", AxisTargetText(target)),
             Theme.AccentLight);
+    }
+
+    private static Guid XInputDeviceGuid(int index)
+    {
+        Span<byte> bytes = stackalloc byte[16];
+        // Stable synthetic GUID: "WTA-XINPUT" plus the XInput user index.
+        ReadOnlySpan<byte> prefix = "WTA-XINPUT"u8;
+        prefix.CopyTo(bytes);
+        bytes[15] = (byte)Math.Clamp(index, 0, 3);
+        return new Guid(bytes);
+    }
+
+    private static bool LooksLikeXInputCompatibilityDevice(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return false;
+        return name.Contains("xbox", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("xinput", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("gamepad for windows", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void AddXInputControllers(HashSet<int> connectedIndices)
+    {
+        foreach (int index in connectedIndices)
+        {
+            Guid guid = XInputDeviceGuid(index);
+            if (_devices.ContainsKey(guid)) continue;
+            var item = new InputDevice
+            {
+                Guid = guid,
+                FriendlyName = $"Xbox / XInput Controller {index + 1}",
+                XInputIndex = index
+            };
+            if (TryReadState(item, out DirectInputState initialState))
+                item.PreviousState = initialState;
+            _devices[guid] = item;
+            _deviceBox.Items.Add(item);
+        }
     }
 
     private void RefreshDevices()
@@ -4795,11 +5029,20 @@ public partial class Form1 : Form
         {
             _directInput = DInput.DirectInput8Create();
 
+            HashSet<int> connectedXInput = Enumerable.Range(0, 4)
+                .Where(XInputGamepad.IsConnected)
+                .ToHashSet();
+
             List<DeviceInstance> instances = _directInput
                 .GetDevices(
                     DeviceClass.GameControl,
                     DeviceEnumerationFlags.AttachedOnly)
                 .Where(instance => !IsVirtualOutputDevice(instance))
+                // Windows often exposes Xbox pads through both DirectInput and
+                // XInput. Prefer the XInput view when its identity is obvious so
+                // the same physical pad does not appear twice.
+                .Where(instance => connectedXInput.Count == 0 ||
+                    !LooksLikeXInputCompatibilityDevice(instance.ProductName))
                 .ToList();
 
             Dictionary<string, int> duplicateCounts = instances
@@ -4820,7 +5063,7 @@ public partial class Form1 : Form
 
                 if (string.IsNullOrWhiteSpace(baseName))
                 {
-                    baseName = "Unnamed DirectInput Controller";
+                    baseName = VT("Devices.UnnamedController");
                 }
 
                 string friendlyName = baseName;
@@ -4875,6 +5118,8 @@ public partial class Form1 : Form
                     // Ignore controllers that cannot be initialized.
                 }
             }
+
+            AddXInputControllers(connectedXInput);
 
             if (_deviceBox.Items.Count == 0)
             {
@@ -5002,7 +5247,7 @@ public partial class Form1 : Form
             SelectDevice(detected.Device.Guid);
 
             SetInstruction(
-                $"Selected device: {detected.Device.FriendlyName}.",
+                VF("Devices.SelectedInstruction", detected.Device.FriendlyName),
                 Theme.Success);
 
             consumeButtonInput = true;
@@ -5113,7 +5358,7 @@ public partial class Form1 : Form
         UpdateProfileSummary();
 
         SetInstruction(
-            $"{target} axis assigned to {source.DisplayName} and saved in {_activeProfileName}.",
+            VF("Devices.AxisAssigned", AxisTargetText(target), source.DisplayName, string.IsNullOrWhiteSpace(_activeProfileName) ? VT("Profiles.DefaultProfile") : _activeProfileName),
             Theme.Success);
     }
 
@@ -5176,7 +5421,7 @@ public partial class Form1 : Form
         }
         catch (Exception exception)
         {
-            HandleVJoyConnectionLost($"Virtual controller output failed: {exception.Message}");
+            HandleVJoyConnectionLost(VF("VJoy.OutputFailed", exception.Message));
         }
     }
 
@@ -5383,7 +5628,7 @@ public partial class Form1 : Form
         {
             _remainingAutomaticVJoyConnectAttempts = 8;
             _vJoyStatusLabel.Text =
-                "vJoy connection was lost — reconnecting automatically.";
+                VT("VJoy.ConnectionLostRetry");
             _vJoyStatusLabel.ForeColor = Theme.Warning;
             _vJoyAutoConnectTimer.Start();
         }
@@ -5441,7 +5686,7 @@ public partial class Form1 : Form
                 out int stableCenter))
         {
             SetInstruction(
-                $"{target} could not be recentered. Keep the control still and try again.",
+                VF("Devices.RecenterFailed", AxisTargetText(target)),
                 Theme.Error);
 
             return;
@@ -5450,7 +5695,7 @@ public partial class Form1 : Form
         source.CenterRaw = stableCenter;
 
         SetInstruction(
-            $"{target} neutral calibrated from a stable sample.",
+            VF("Devices.Recentered", AxisTargetText(target)),
             Theme.Success);
     }
 
@@ -5483,8 +5728,8 @@ public partial class Form1 : Form
         {
             SetInstruction(
                 centeredCount > 0
-                    ? $"Calibrated the neutral centre of {centeredCount} configured axis/axes."
-                    : "No configured physical axes could be centered.",
+                    ? VF("Devices.RecenterAllSuccess", centeredCount)
+                    : VT("Devices.RecenterAllFailed"),
                 centeredCount > 0
                     ? Theme.Success
                     : Theme.Error);
@@ -5571,7 +5816,7 @@ public partial class Form1 : Form
             SelectDevice(first.DeviceGuid);
 
             SetInstruction(
-                $"Detected {first.FullName}. Release it for a single binding, or hold it and press another input.",
+                VF("Trim.FirstInputDetected", first.FullName),
                 Theme.AccentLight);
 
             return;
@@ -5641,7 +5886,7 @@ public partial class Form1 : Form
         SaveBindings();
 
         SetInstruction(
-            $"{GetActionName(action)} assigned and saved: {_bindings[action].FullDisplay}.",
+            VF("Trim.BindingAssigned", GetActionName(action), _bindings[action].FullDisplay),
             Theme.Success);
     }
 
@@ -5858,13 +6103,13 @@ public partial class Form1 : Form
             if (wasForeign)
             {
                 SetInstruction(
-                    "Game chord released. VTrim input restored.",
+                    VT("Sensitivity.GameChordReleased"),
                     Theme.Success);
             }
             else if (wasVTrimModifier)
             {
                 SetInstruction(
-                    "VTrim modifier released.",
+                    VT("Sensitivity.ModifierReleased"),
                     Theme.Muted);
             }
         }
@@ -5912,7 +6157,7 @@ public partial class Form1 : Form
             if (changedContext)
             {
                 SetInstruction(
-                    $"VTrim modifier context: {newlyPressedVTrimModifier.FullName}.",
+                    VF("Sensitivity.ModifierContext", newlyPressedVTrimModifier.FullName),
                     Theme.Success);
             }
 
@@ -5994,8 +6239,7 @@ public partial class Form1 : Form
         _capturedCombinationTriggers.Clear();
 
         SetInstruction(
-            $"Game chord locked by {candidate.FullName}. " +
-            "Trim triggers will be ignored until this button is released or a VTrim modifier is pressed.",
+            VF("Sensitivity.GameChordLocked", candidate.FullName),
             Theme.Warning);
     }
 
@@ -6285,12 +6529,17 @@ public partial class Form1 : Form
 
     private void ToggleInstructorMode()
     {
-        if (!IsPropProfile) return;
+        if (!IsFlightAssistantEligibleForActiveProfile(out string reason))
+        {
+            ShowFlightAssistantEligibilityNotice(reason);
+            return;
+        }
+        if (!_instructorModeEnabled && !ConfirmFlightAssistantEnable()) return;
         _instructorModeEnabled = !_instructorModeEnabled;
         ResetAutomaticInstructorHold(); UpdateInstructorModeUi();
         if (!_loadingSavedSettings) SaveBindings();
         SetInstruction(_instructorModeEnabled
-            ? "Flight Assistant enabled: pitch attitude hold and pitch-rate dampening."
+            ? VT("Instructor.EnabledStatus")
             : VT("Instructor.Off"), _instructorModeEnabled ? Theme.Success : Theme.Muted);
     }
 
@@ -6332,9 +6581,9 @@ public partial class Form1 : Form
                 Math.Max(0.002, _rudderResponse.Deadzone / 100)));
         ResetAutomaticInstructorHold();
         SetInstruction(capture.Limited
-            ? "Trim stored at the available trim limit. Return controls to center; the full requested offset exceeded the limit."
+            ? VT("Trim.StoredAtLimit")
             : _storeTrimReturn.AnyWaiting
-                ? "Trim stored. Return stick/pedals to center; then fine-tune with your normal trim buttons."
+                ? VT("Trim.StoredReturnCenter")
                 : VT("Instructor.TrimStored"),
             capture.Limited ? Theme.Warning : Theme.Success);
         UpdateInstructorModeUi();
@@ -6388,7 +6637,7 @@ public partial class Form1 : Form
                 SetInstruction(
                     _instructorModeEnabled
                         ? VT("Instructor.Centered")
-                        : "All trim is centered.",
+                        : VT("Trim.AllCentered"),
                     Theme.Success);
                 break;
         }
@@ -6457,29 +6706,42 @@ public partial class Form1 : Form
 
     private void UpdateBindingButton(TrimAction action)
     {
-        if (!_bindingButtons.TryGetValue(
-                action,
-                out Button? button))
+        string bindingText = _captureAction == action
+            ? VT("Common.Listening")
+            : _bindings.TryGetValue(action, out ActionBinding? assigned)
+                ? assigned.CompactDisplay
+                : VT("Trim.ClickBind");
+        string toolTipText = _bindings.TryGetValue(action, out ActionBinding? binding)
+            ? binding.FullDisplay
+            : VT("Trim.AssignTooltip");
+
+        void Apply(Button? button, bool aircraftEditor)
         {
-            return;
+            if (button is null || button.IsDisposed) return;
+            if (aircraftEditor)
+            {
+                button.Text = _captureAction == action
+                    ? GetActionName(action) + "  ·  " + VT("Common.Listening")
+                    : GetActionName(action);
+                string aircraftTip = _captureAction == action
+                    ? "Listening for a new input..."
+                    : _bindings.TryGetValue(action, out ActionBinding? aircraftBinding)
+                        ? $"Current: {aircraftBinding.FullDisplay}\r\nClick to bind a different input. Right-click to clear."
+                        : "Click to bind. Right-click to clear.";
+                _toolTip.SetToolTip(button, aircraftTip);
+            }
+            else
+            {
+                button.Text = $"{GetActionSymbol(action)}  {bindingText}";
+                _toolTip.SetToolTip(button, GetActionName(action) + "\r\n" + toolTipText);
+            }
+            button.TextAlign = ContentAlignment.MiddleCenter;
         }
 
-        string bindingText = _bindings.TryGetValue(
-            action,
-            out ActionBinding? binding)
-                ? binding.CompactDisplay
-                : VT("Trim.ClickBind");
-
-        button.Text = $"{GetActionSymbol(action)}  {bindingText}";
-        button.TextAlign = ContentAlignment.MiddleCenter;
-
-        string toolTipText = _bindings.TryGetValue(
-            action,
-            out binding)
-                ? binding.FullDisplay
-                : VT("Trim.AssignTooltip");
-
-        _toolTip.SetToolTip(button, GetActionName(action) + "\r\n" + toolTipText);
+        _bindingButtons.TryGetValue(action, out Button? dashboardButton);
+        Apply(dashboardButton, aircraftEditor: false);
+        _aircraftBindingButtons.TryGetValue(action, out Button? aircraftButton);
+        if (!ReferenceEquals(dashboardButton, aircraftButton)) Apply(aircraftButton, aircraftEditor: true);
     }
 
     private void UpdateAxisMappingLabels()
@@ -6527,6 +6789,14 @@ public partial class Form1 : Form
                 : Theme.Warning;
     }
 
+    private string AxisTargetText(AxisTarget target) => target switch
+    {
+        AxisTarget.Roll => VT("Curves.Roll"),
+        AxisTarget.Pitch => VT("Curves.Pitch"),
+        AxisTarget.Rudder => VT("Curves.RudderYaw"),
+        _ => target.ToString()
+    };
+
     private void SetAxisDetectButtonState(
         AxisTarget target,
         bool listening)
@@ -6541,8 +6811,8 @@ public partial class Form1 : Form
         };
 
         button.Text = listening
-            ? "Move axis..."
-            : $"Detect {target}";
+            ? VT("Devices.MoveAxis")
+            : string.Format(CultureInfo.CurrentCulture, VT("Devices.DetectAxis"), AxisTargetText(target));
 
         button.BackColor = listening
             ? Theme.Warning
@@ -6578,7 +6848,7 @@ public partial class Form1 : Form
     private void ResetAutoDetectDeviceButton()
     {
         _autoDetectDeviceButton.Text =
-            "Auto-Detect Device";
+            VT("Devices.AutoDetectDevice");
 
         _autoDetectDeviceButton.BackColor =
             Theme.Accent;
@@ -6590,13 +6860,23 @@ public partial class Form1 : Form
 
         try
         {
-            AppSettings settings =
-                File.Exists(AppSettingsFilePath)
-                    ? JsonSerializer.Deserialize<AppSettings>(
-                          File.ReadAllText(AppSettingsFilePath),
-                          BindingsJsonOptions)
-                      ?? new AppSettings()
-                    : new AppSettings();
+            AppSettings settings = new AppSettings();
+            foreach (string candidate in new[] { AppSettingsFilePath, AppSettingsFilePath + ".bak" })
+            {
+                try
+                {
+                    if (!File.Exists(candidate)) continue;
+                    AppSettings? restored = JsonSerializer.Deserialize<AppSettings>(
+                        File.ReadAllText(candidate),
+                        BindingsJsonOptions);
+                    if (restored is null) continue;
+                    settings = restored;
+                    break;
+                }
+                catch (JsonException) { }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
 
             _globalAxes = settings.PhysicalAxes;
             _favoriteAircraft = settings.FavoriteAircraft ?? new();
@@ -6616,7 +6896,7 @@ public partial class Form1 : Form
             _startWithWindowsMinimizedBox.Checked = false;
 
             SetStatus(
-                $"Startup preferences were reset: {exception.Message}",
+                VF("Settings.StartupReset", exception.Message),
                 Theme.Warning);
         }
         finally
@@ -6653,7 +6933,7 @@ public partial class Form1 : Form
             Directory.CreateDirectory(
                 SettingsDirectory);
 
-            File.WriteAllText(
+            WriteTextWithBackupAtomic(
                 AppSettingsFilePath,
                 JsonSerializer.Serialize(
                     settings,
@@ -6665,14 +6945,14 @@ public partial class Form1 : Form
             if (showConfirmation)
             {
                 SetStatus(
-                    "Automatic connection and Windows startup preferences saved.",
+                    VT("Settings.Saved"),
                     Theme.Success);
             }
         }
         catch (Exception exception)
         {
             SetStatus(
-                $"Startup preferences could not be saved: {exception.Message}",
+                VF("Settings.SaveFailed", exception.Message),
                 Theme.Error);
         }
     }
@@ -6749,32 +7029,28 @@ public partial class Form1 : Form
                 GetProfileNames();
 
             if (profileNames.Count == 0 ||
-                (!File.Exists(ActiveProfileFilePath) && File.Exists(DefaultSetupFilePath)))
+                (!(File.Exists(ActiveProfileFilePath) || File.Exists(ActiveProfileFilePath + ".bak")) &&
+                 (File.Exists(DefaultSetupFilePath) || File.Exists(DefaultSetupFilePath + ".bak"))))
             {
                 _activeProfileName =
                     string.Empty;
 
-                var defaultSetup = File.Exists(DefaultSetupFilePath)
-                    ? JsonSerializer.Deserialize<SavedBindingsFile>(File.ReadAllText(DefaultSetupFilePath), BindingsJsonOptions)
-                    : null;
+                SavedBindingsFile? defaultSetup =
+                    ReadBindingsFileWithBackup(DefaultSetupFilePath);
                 ApplySavedProfile(defaultSetup ?? new SavedBindingsFile { ProfileName = string.Empty });
 
                 DeleteActiveProfilePointer();
                 RefreshProfileList();
 
                 SetInstruction(
-                    "Default setup: axes and bindings are saved automatically.",
+                    VT("Profiles.DefaultControlsLoaded"),
                     Theme.Success);
 
                 return;
             }
 
             string requestedProfile =
-                File.Exists(
-                    ActiveProfileFilePath)
-                    ? File.ReadAllText(
-                        ActiveProfileFilePath).Trim()
-                    : string.Empty;
+                ReadTextWithBackup(ActiveProfileFilePath).Trim();
 
             _activeProfileName =
                 UpgradeLegacyProfileDisplayName(
@@ -6791,12 +7067,12 @@ public partial class Form1 : Form
                     _activeProfileName);
 
             ApplySavedProfile(
-                profile);
+                PrepareAircraftProfileForRuntime(profile));
 
             RefreshProfileList();
 
             SetInstruction(
-                $"Loaded profile: {_activeProfileName}.",
+                VF("Profiles.Loaded", _activeProfileName),
                 Theme.Success);
         }
         catch (Exception exception)
@@ -6805,7 +7081,7 @@ public partial class Form1 : Form
                 string.Empty;
 
             SetInstruction(
-                $"Profiles could not be loaded: {exception.Message}",
+                VF("Profiles.LoadFailed", exception.Message),
                 Theme.Error);
         }
         finally
@@ -6822,39 +7098,60 @@ public partial class Form1 : Form
             if (_loadingSavedSettings) return;
             CaptureGlobalAxes();
             SaveApplicationSettings(showConfirmation: false);
-            if (string.IsNullOrWhiteSpace(_activeProfileName))
+
+            // The main Trim Dashboard is the live Default Controls editor.
+            // When an aircraft is following Default Controls, edits made there
+            // update the default template rather than destroying that aircraft's
+            // saved custom snapshot.
+            if (string.IsNullOrWhiteSpace(_activeProfileName) || !_activeUseCustomControls)
             {
+                SavedBindingsFile defaults = CaptureCurrentProfile();
+                defaults.Id = Guid.NewGuid().ToString("D");
+                defaults.Version = 13;
+                defaults.ProfileName = string.Empty;
+                defaults.AircraftId = null;
+                defaults.DetectedAircraftKey = null;
+                defaults.AircraftType = "Prop Plane";
+                defaults.UseCustomControls = false;
+                defaults.HasCustomControlsSnapshot = false;
+                defaults.DampingSupport = "Unknown";
+                defaults.InstructorModeEnabled = false;
                 Directory.CreateDirectory(SettingsDirectory);
-                string temporary = DefaultSetupFilePath + ".tmp";
-                File.WriteAllText(temporary, JsonSerializer.Serialize(CaptureCurrentProfile(), BindingsJsonOptions));
-                File.Move(temporary, DefaultSetupFilePath, overwrite: true);
-                DeleteActiveProfilePointer();
+                WriteTextWithBackupAtomic(
+                    DefaultSetupFilePath,
+                    JsonSerializer.Serialize(defaults, BindingsJsonOptions));
+
+                if (string.IsNullOrWhiteSpace(_activeProfileName))
+                {
+                    DeleteActiveProfilePointer();
+                }
+                else
+                {
+                    // Preserve any previous custom settings for this aircraft.
+                    SavedBindingsFile stored = ReadProfile(_activeProfileName);
+                    stored.UseCustomControls = false;
+                    stored.HasCustomControlsSnapshot = _activeHasCustomControlsSnapshot;
+                    stored.DampingSupport = NormalizeDampingSupport(_activeDampingSupport);
+                    stored.Version = Math.Max(stored.Version, 13);
+                    WriteProfile(_activeProfileName, stored);
+                    WriteActiveProfileName();
+                }
                 UpdateProfileSummary();
                 return;
             }
 
-            Directory.CreateDirectory(
-                ProfilesDirectory);
-
-            SavedBindingsFile profile =
-                CaptureCurrentProfile();
-
-            WriteProfile(
-                _activeProfileName,
-                profile);
-
+            Directory.CreateDirectory(ProfilesDirectory);
+            SavedBindingsFile profile = CaptureCurrentProfile();
+            profile.UseCustomControls = true;
+            profile.HasCustomControlsSnapshot = true;
+            WriteProfile(_activeProfileName, profile);
             WriteActiveProfileName();
             UpdateProfileSummary();
         }
         catch (Exception exception)
         {
-            if (!IsDisposed &&
-                IsHandleCreated)
-            {
-                SetStatus(
-                    $"Profile could not be saved: {exception.Message}",
-                    Theme.Error);
-            }
+            if (!IsDisposed && IsHandleCreated)
+                SetStatus(VF("Profiles.SaveFailed", exception.Message), Theme.Error);
         }
     }
 
@@ -6865,10 +7162,14 @@ public partial class Form1 : Form
             {
                 Id = _profileId,
                 AircraftId = _profileAircraftId,
-                Version = 11,
+                DetectedAircraftKey = _profileDetectedAircraftKey,
+                Version = 13,
                 ProfileName =
                     _activeProfileName,
                 AircraftType = NormalizeAircraftType(_profileTypeBox?.SelectedItem?.ToString()),
+                UseCustomControls = _activeUseCustomControls,
+                HasCustomControlsSnapshot = _activeHasCustomControlsSnapshot,
+                DampingSupport = NormalizeDampingSupport(_activeDampingSupport),
 
                 RollAxis = null,
 
@@ -6918,7 +7219,7 @@ public partial class Form1 : Form
                     _repeatSpeedSlider?.Value ?? 7,
 
                 InstructorModeEnabled =
-                    _instructorModeEnabled,
+                    _instructorModeEnabled && IsFlightAssistantEligibleForActiveProfile(out _),
                 Instructor = _instructorTuning,
                 RollResponse = _rollResponse,
                 PitchResponse = _pitchResponse,
@@ -6968,8 +7269,14 @@ public partial class Form1 : Form
     private void ApplySavedProfile(
         SavedBindingsFile profile)
     {
+        int sourceProfileVersion = profile.Version;
         _profileId = Guid.TryParse(profile.Id, out _) ? profile.Id : Guid.NewGuid().ToString("D");
+        NormalizeAircraftControlModeMetadata(profile, string.IsNullOrWhiteSpace(_activeProfileName));
         _profileAircraftId = profile.AircraftId;
+        _profileDetectedAircraftKey = profile.DetectedAircraftKey;
+        _activeUseCustomControls = !string.IsNullOrWhiteSpace(_activeProfileName) && profile.UseCustomControls;
+        _activeHasCustomControlsSnapshot = !string.IsNullOrWhiteSpace(_activeProfileName) && profile.HasCustomControlsSnapshot;
+        _activeDampingSupport = NormalizeDampingSupport(profile.DampingSupport);
         bool oldLoadingState =
             _loadingSavedSettings;
 
@@ -6979,8 +7286,6 @@ public partial class Form1 : Form
         {
             CancelBindingCapture();
             ApplyGlobalAxes(profile);
-            _globalAxes!.Bindings ??= profile.Bindings;
-            profile.Bindings = _globalAxes.Bindings;
             ResetForeignChordSuppression();
             _trimHoldStartedTimes.Clear();
             _capturedCombinationTriggers.Clear();
@@ -6991,7 +7296,8 @@ public partial class Form1 : Form
             _automaticRudderRollCompensation = 0.0;
             _automaticRudderPitchCompensation = 0.0;
             _instructorModeEnabled =
-                profile.Version >= 10 && profile.InstructorModeEnabled && NormalizeAircraftType(profile.AircraftType) != "Helicopter";
+                profile.Version >= 10 && profile.InstructorModeEnabled &&
+                IsFlightAssistantEligibleForProfile(profile, out _);
             _instructorTuning = profile.Version >= 11 ? profile.Instructor ?? new() : new();
             _instructorTuning.Normalize();
             _rollResponse = profile.RollResponse ?? new();
@@ -7010,6 +7316,7 @@ public partial class Form1 : Form
             _horizontalRudderCalibrationMessage = string.Empty;
 
             _bindings.Clear();
+            profile.Bindings ??= new Dictionary<string, SavedActionBinding>(StringComparer.OrdinalIgnoreCase);
 
             foreach ((string actionName, SavedActionBinding savedBinding)
                      in profile.Bindings)
@@ -7046,7 +7353,7 @@ public partial class Form1 : Form
 
                 // 1.3.0 used the StoreCurrentTrim key for Instructor Mode.
                 // Preserve that HOTAS assignment as Instructor, not as BOTH actions.
-                if (profile.Version == 7 && action == TrimAction.StoreCurrentTrim &&
+                if (sourceProfileVersion == 7 && action == TrimAction.StoreCurrentTrim &&
                     !profile.Bindings.Keys.Any(k => string.Equals(k, nameof(TrimAction.ToggleInstructor), StringComparison.OrdinalIgnoreCase)))
                     action = TrimAction.ToggleInstructor;
 
@@ -7104,7 +7411,7 @@ public partial class Form1 : Form
                     _repeatSpeedSlider.Maximum);
 
             _horizontalRudderAssistBox.Checked =
-                false;
+                profile.HorizontalRudderAssist;
 
             _rudderRollCompensationSlider.Value =
                 Math.Clamp(
@@ -7129,7 +7436,7 @@ public partial class Form1 : Form
                     : -1;
 
             _selectedDeviceName =
-                profile.SelectedDeviceName;
+                profile.SelectedDeviceName ?? string.Empty;
 
             _selectedDeviceGuid =
                 Guid.TryParse(
@@ -7218,6 +7525,63 @@ public partial class Form1 : Form
         };
     }
 
+    private static SavedBindingsFile? ReadBindingsFileWithBackup(string path)
+    {
+        foreach (string candidate in new[] { path, path + ".bak" })
+        {
+            try
+            {
+                if (!File.Exists(candidate)) continue;
+                SavedBindingsFile? profile = JsonSerializer.Deserialize<SavedBindingsFile>(
+                    File.ReadAllText(candidate), BindingsJsonOptions);
+                if (profile is not null) return profile;
+            }
+            catch (JsonException) { }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+        return null;
+    }
+
+    private static string ReadTextWithBackup(string path)
+    {
+        foreach (string candidate in new[] { path, path + ".bak" })
+        {
+            try
+            {
+                if (File.Exists(candidate)) return File.ReadAllText(candidate);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+        return string.Empty;
+    }
+
+    private static void WriteTextWithBackupAtomic(string path, string text)
+    {
+        string full = Path.GetFullPath(path);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        string temporary = full + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllText(temporary, text, new UTF8Encoding(false));
+            // Validate JSON payloads before replacing the current profile/setup.
+            if (Path.GetExtension(full).Equals(".json", StringComparison.OrdinalIgnoreCase))
+            {
+                using JsonDocument _ = JsonDocument.Parse(File.ReadAllText(temporary));
+            }
+            if (File.Exists(full))
+            {
+                try { File.Copy(full, full + ".bak", overwrite: true); } catch { }
+            }
+            File.Move(temporary, full, overwrite: true);
+        }
+        finally
+        {
+            try { if (File.Exists(temporary)) File.Delete(temporary); } catch { }
+        }
+    }
+
     private List<string> GetProfileNames()
     {
         Directory.CreateDirectory(
@@ -7286,9 +7650,8 @@ public partial class Form1 : Form
     private bool ProfileExists(
         string profileName)
     {
-        return File.Exists(
-            GetProfileFilePath(
-                profileName));
+        string path = GetProfileFilePath(profileName);
+        return File.Exists(path) || File.Exists(path + ".bak");
     }
 
     private SavedBindingsFile ReadProfile(
@@ -7298,7 +7661,7 @@ public partial class Form1 : Form
             GetProfileFilePath(
                 profileName);
 
-        if (!File.Exists(profilePath))
+        if (!File.Exists(profilePath) && !File.Exists(profilePath + ".bak"))
         {
             return new SavedBindingsFile
             {
@@ -7307,14 +7670,8 @@ public partial class Form1 : Form
             };
         }
 
-        string json =
-            File.ReadAllText(
-                profilePath);
-
         SavedBindingsFile? profile =
-            JsonSerializer.Deserialize<SavedBindingsFile>(
-                json,
-                BindingsJsonOptions);
+            ReadBindingsFileWithBackup(profilePath);
 
         profile ??=
             new SavedBindingsFile();
@@ -7322,6 +7679,7 @@ public partial class Form1 : Form
         profile.ProfileName =
             UpgradeLegacyProfileDisplayName(
                 profileName);
+        NormalizeAircraftControlModeMetadata(profile, isDefaultProfile: false);
 
         return profile;
     }
@@ -7335,30 +7693,22 @@ public partial class Form1 : Form
 
         profile.ProfileName =
             profileName;
+        profile.Version = Math.Max(profile.Version, 13);
+        profile.DampingSupport = NormalizeDampingSupport(profile.DampingSupport);
 
         string profilePath =
             GetProfileFilePath(
                 profileName);
-
-        string temporaryPath =
-            profilePath + ".tmp";
 
         string json =
             JsonSerializer.Serialize(
                 profile,
                 BindingsJsonOptions);
 
-        File.WriteAllText(
-            temporaryPath,
-            json);
-        using (JsonDocument.Parse(File.ReadAllText(temporaryPath))) { }
-
         if (File.Exists(profilePath) && !File.Exists(profilePath + ".pre-1.3.1.bak"))
             File.Copy(profilePath, profilePath + ".pre-1.3.1.bak", overwrite: false);
-        File.Move(
-            temporaryPath,
-            profilePath,
-            overwrite: true);
+
+        WriteTextWithBackupAtomic(profilePath, json);
     }
 
     private void WriteActiveProfileName()
@@ -7373,7 +7723,7 @@ public partial class Form1 : Form
             return;
         }
 
-        File.WriteAllText(
+        WriteTextWithBackupAtomic(
             ActiveProfileFilePath,
             _activeProfileName);
     }
@@ -7783,18 +8133,23 @@ public partial class Form1 : Form
 
         try
         {
-            var pollResult = device.Device.Poll();
+            if (device.XInputIndex is int xinputIndex)
+                return XInputGamepad.TryGetState(xinputIndex, out state);
+            IDirectInputDevice8? inputDevice = device.Device;
+            if (inputDevice is null) return false;
+
+            var pollResult = inputDevice.Poll();
 
             if (pollResult.Failure)
             {
-                var acquireResult = device.Device.Acquire();
+                var acquireResult = inputDevice.Acquire();
 
                 if (acquireResult.Failure)
                 {
                     return false;
                 }
 
-                pollResult = device.Device.Poll();
+                pollResult = inputDevice.Poll();
 
                 if (pollResult.Failure)
                 {
@@ -7802,7 +8157,7 @@ public partial class Form1 : Form
                 }
             }
 
-            state = device.Device.GetCurrentJoystickState();
+            state = inputDevice.GetCurrentJoystickState();
             return true;
         }
         catch
@@ -8152,15 +8507,15 @@ public partial class Form1 : Form
             TextAlign = ContentAlignment.MiddleLeft,
             Font = new Font("Segoe UI Semibold", 11F),
             Padding = new Padding(8, 0, 8, 0),
-            AutoEllipsis = false
+            AutoEllipsis = true
         };
     }
 
-    private static CheckBox CreateInvertBox()
+    private CheckBox CreateInvertBox()
     {
         return new CheckBox
         {
-            Text = "Invert",
+            Text = VT("Devices.Invert"),
             Tag = "i18n:Devices.Invert",
             ForeColor = Theme.Text,
             BackColor = Color.Transparent,
@@ -8259,7 +8614,7 @@ public partial class Form1 : Form
                 9F),
             Cursor = Cursors.Hand,
             UseMnemonic = false,
-            AutoEllipsis = false
+            AutoEllipsis = true
         };
 
         button.FlatAppearance.BorderSize = 0;
@@ -8284,7 +8639,7 @@ public partial class Form1 : Form
             Font = new Font("Segoe UI Semibold", 9F),
             Cursor = Cursors.Hand,
             UseMnemonic = false,
-            AutoEllipsis = false
+            AutoEllipsis = true
         };
 
         button.FlatAppearance.BorderColor = Theme.BeerBorder;
@@ -8308,7 +8663,7 @@ public partial class Form1 : Form
                 9F),
             Cursor = Cursors.Hand,
             UseMnemonic = false,
-            AutoEllipsis = false
+            AutoEllipsis = true
         };
 
         button.FlatAppearance.BorderColor =
@@ -8337,7 +8692,7 @@ public partial class Form1 : Form
                 9F),
             Cursor = Cursors.Hand,
             UseMnemonic = false,
-            AutoEllipsis = false
+            AutoEllipsis = true
         };
 
         button.FlatAppearance.BorderColor =
@@ -8447,53 +8802,78 @@ internal sealed class CardPanel : Panel
 
 internal static class Theme
 {
-    public static readonly Color Background = Color.FromArgb(29, 31, 33);
-    public static readonly Color Header = Color.FromArgb(29, 31, 33);
-    public static readonly Color Navigation = Color.FromArgb(25, 25, 28);
-    public static readonly Color SelectedNavigation = Color.FromArgb(46, 46, 51);
-    public static readonly Color Surface = Color.FromArgb(38, 38, 42);
-    public static readonly Color Panel = Color.FromArgb(36, 38, 40);
-    public static readonly Color Inner = Color.FromArgb(25, 25, 28);
-    public static readonly Color Control = Color.FromArgb(53, 53, 58);
-    public static readonly Color ControlHover = Color.FromArgb(66, 66, 72);
-    public static readonly Color ControlPressed = Color.FromArgb(77, 77, 84);
-    public static readonly Color Border = Color.FromArgb(75, 75, 82);
-    public static readonly Color Text = Color.FromArgb(235, 238, 240);
-    public static readonly Color Muted = Color.FromArgb(168, 168, 176);
-    public static readonly Color Accent = Color.FromArgb(226, 180, 85);
-    public static readonly Color AccentHover = Color.FromArgb(241, 198, 103);
-    public static readonly Color AccentPressed = Color.FromArgb(188, 145, 63);
-    public static readonly Color AccentLight = Color.FromArgb(235, 211, 157);
-    public static readonly Color Success = Color.FromArgb(111, 211, 151);
-    public static readonly Color Warning = Color.FromArgb(241, 183, 91);
-    public static readonly Color Error = Color.FromArgb(242, 116, 124);
+    public static Color Background = Color.FromArgb(29, 31, 33);
+    public static Color Header = Color.FromArgb(29, 31, 33);
+    public static Color Navigation = Color.FromArgb(25, 25, 28);
+    public static Color SelectedNavigation = Color.FromArgb(46, 46, 51);
+    public static Color Surface = Color.FromArgb(38, 38, 42);
+    public static Color Panel = Color.FromArgb(36, 38, 40);
+    public static Color Inner = Color.FromArgb(25, 25, 28);
+    public static Color Control = Color.FromArgb(53, 53, 58);
+    public static Color ControlHover = Color.FromArgb(66, 66, 72);
+    public static Color ControlPressed = Color.FromArgb(77, 77, 84);
+    public static Color Border = Color.FromArgb(75, 75, 82);
+    public static Color Text = Color.FromArgb(235, 238, 240);
+    public static Color Muted = Color.FromArgb(168, 168, 176);
+    public static Color Accent = Color.FromArgb(226, 180, 85);
+    public static Color AccentHover = Color.FromArgb(241, 198, 103);
+    public static Color AccentPressed = Color.FromArgb(188, 145, 63);
+    public static Color AccentLight = Color.FromArgb(235, 211, 157);
+    public static Color Success = Color.FromArgb(111, 211, 151);
+    public static Color Warning = Color.FromArgb(241, 183, 91);
+    public static Color Error = Color.FromArgb(242, 116, 124);
 
-    public static readonly Color WarningControl = Color.FromArgb(92, 68, 35);
-    public static readonly Color WarningControlHover = Color.FromArgb(112, 82, 41);
-    public static readonly Color WarningControlPressed = Color.FromArgb(128, 92, 46);
-    public static readonly Color WarningBorder = Color.FromArgb(164, 119, 59);
+    public static Color WarningControl = Color.FromArgb(92, 68, 35);
+    public static Color WarningControlHover = Color.FromArgb(112, 82, 41);
+    public static Color WarningControlPressed = Color.FromArgb(128, 92, 46);
+    public static Color WarningBorder = Color.FromArgb(164, 119, 59);
 
-    public static readonly Color TrimControl = Color.FromArgb(47, 47, 52);
-    public static readonly Color TrimControlHover = Color.FromArgb(61, 61, 67);
-    public static readonly Color TrimControlPressed = Color.FromArgb(72, 72, 79);
-    public static readonly Color TrimBorder = Color.FromArgb(82, 82, 90);
+    public static Color TrimControl = Color.FromArgb(47, 47, 52);
+    public static Color TrimControlHover = Color.FromArgb(61, 61, 67);
+    public static Color TrimControlPressed = Color.FromArgb(72, 72, 79);
+    public static Color TrimBorder = Color.FromArgb(82, 82, 90);
 
-    public static readonly Color ResetControl = Color.FromArgb(86, 55, 43);
-    public static readonly Color ResetControlHover = Color.FromArgb(108, 67, 50);
-    public static readonly Color ResetControlPressed = Color.FromArgb(124, 75, 56);
-    public static readonly Color ResetBorder = Color.FromArgb(158, 100, 72);
+    public static Color ResetControl = Color.FromArgb(86, 55, 43);
+    public static Color ResetControlHover = Color.FromArgb(108, 67, 50);
+    public static Color ResetControlPressed = Color.FromArgb(124, 75, 56);
+    public static Color ResetBorder = Color.FromArgb(158, 100, 72);
 
-    public static readonly Color RudderControl = Color.FromArgb(40, 63, 61);
-    public static readonly Color RudderControlHover = Color.FromArgb(49, 79, 76);
-    public static readonly Color RudderControlPressed = Color.FromArgb(58, 92, 88);
-    public static readonly Color RudderBorder = Color.FromArgb(77, 123, 117);
-    public static readonly Color RudderAccent = Color.FromArgb(117, 190, 181);
+    public static Color RudderControl = Color.FromArgb(40, 63, 61);
+    public static Color RudderControlHover = Color.FromArgb(49, 79, 76);
+    public static Color RudderControlPressed = Color.FromArgb(58, 92, 88);
+    public static Color RudderBorder = Color.FromArgb(77, 123, 117);
+    public static Color RudderAccent = Color.FromArgb(117, 190, 181);
 
-    public static readonly Color BeerControl = Color.FromArgb(94, 67, 30);
-    public static readonly Color BeerControlHover = Color.FromArgb(119, 83, 35);
-    public static readonly Color BeerControlPressed = Color.FromArgb(136, 94, 40);
-    public static readonly Color BeerBorder = Color.FromArgb(183, 129, 52);
-    public static readonly Color BeerText = Color.FromArgb(255, 232, 184);
+    public static Color BeerControl = Color.FromArgb(94, 67, 30);
+    public static Color BeerControlHover = Color.FromArgb(119, 83, 35);
+    public static Color BeerControlPressed = Color.FromArgb(136, 94, 40);
+    public static Color BeerBorder = Color.FromArgb(183, 129, 52);
+    public static Color BeerText = Color.FromArgb(255, 232, 184);
+
+    public static void ApplyVariant(string? themeName)
+    {
+        bool mig = string.Equals(themeName, "MiG29", StringComparison.OrdinalIgnoreCase);
+        Background = mig ? Color.FromArgb(24, 24, 24) : Color.FromArgb(29, 31, 33);
+        Header = Background;
+        Navigation = mig ? Color.FromArgb(21, 21, 22) : Color.FromArgb(25, 25, 28);
+        SelectedNavigation = mig ? Color.FromArgb(48, 35, 34) : Color.FromArgb(46, 46, 51);
+        Surface = mig ? Color.FromArgb(35, 33, 33) : Color.FromArgb(38, 38, 42);
+        Panel = mig ? Color.FromArgb(31, 31, 31) : Color.FromArgb(36, 38, 40);
+        Inner = mig ? Color.FromArgb(22, 22, 22) : Color.FromArgb(25, 25, 28);
+        Control = mig ? Color.FromArgb(49, 45, 44) : Color.FromArgb(53, 53, 58);
+        ControlHover = mig ? Color.FromArgb(63, 53, 51) : Color.FromArgb(66, 66, 72);
+        ControlPressed = mig ? Color.FromArgb(73, 57, 54) : Color.FromArgb(77, 77, 84);
+        Border = mig ? Color.FromArgb(91, 75, 70) : Color.FromArgb(75, 75, 82);
+        Text = mig ? Color.FromArgb(239, 226, 196) : Color.FromArgb(235, 238, 240);
+        Muted = mig ? Color.FromArgb(158, 148, 136) : Color.FromArgb(168, 168, 176);
+        Accent = mig ? Color.FromArgb(196, 54, 46) : Color.FromArgb(226, 180, 85);
+        AccentHover = mig ? Color.FromArgb(220, 71, 61) : Color.FromArgb(241, 198, 103);
+        AccentPressed = mig ? Color.FromArgb(160, 42, 37) : Color.FromArgb(188, 145, 63);
+        AccentLight = mig ? Color.FromArgb(235, 197, 174) : Color.FromArgb(235, 211, 157);
+        Success = Color.FromArgb(111, 211, 151);
+        Warning = mig ? Color.FromArgb(225, 161, 82) : Color.FromArgb(241, 183, 91);
+        Error = Color.FromArgb(242, 116, 124);
+    }
 }
 
 internal sealed class DarkTabControl : TabControl
@@ -8824,7 +9204,7 @@ internal sealed class StepEditor : UserControl
             maximum);
 
         BackColor = Theme.Control;
-        MinimumSize = new Size(82, 32);
+        MinimumSize = new Size(72, 30);
 
         var layout = new TableLayoutPanel
         {
@@ -8839,7 +9219,7 @@ internal sealed class StepEditor : UserControl
         layout.ColumnStyles.Add(
             new ColumnStyle(
                 SizeType.Absolute,
-                36F));
+                30F));
 
         layout.ColumnStyles.Add(
             new ColumnStyle(
@@ -8849,7 +9229,7 @@ internal sealed class StepEditor : UserControl
         layout.ColumnStyles.Add(
             new ColumnStyle(
                 SizeType.Absolute,
-                36F));
+                30F));
 
         layout.RowStyles.Add(
             new RowStyle(
@@ -8865,13 +9245,13 @@ internal sealed class StepEditor : UserControl
         _valueBox = new TextBox
         {
             Dock = DockStyle.Fill,
-            Margin = new Padding(1, 5, 1, 5),
+            Margin = new Padding(1, 3, 1, 3),
             BorderStyle = BorderStyle.FixedSingle,
             BackColor = Color.FromArgb(248, 248, 248),
             ForeColor = Color.Black,
             Font = new Font(
                 "Segoe UI Semibold",
-                10F),
+                9.3F),
             TextAlign = HorizontalAlignment.Center
         };
 
@@ -8949,7 +9329,7 @@ internal sealed class StepEditor : UserControl
             ForeColor = Theme.Text,
             Font = new Font(
                 "Segoe UI Semibold",
-                13F),
+                11F),
             Cursor = Cursors.Hand,
             TabStop = false
         };
@@ -9622,5 +10002,3 @@ internal sealed class RudderAxisPreview : Control
                    (right - left));
     }
 }
-
-

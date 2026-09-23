@@ -3,13 +3,16 @@ namespace HOTASTrimUtility;
 public partial class Form1
 {
     private event Action? AircraftProfilesChanged;
+    private event Action? AircraftProfileSelectionChanged;
+    public event Action<string>? AircraftProfileEditorRequested;
     public Control CreateAircraftProfileBrowser(bool compact)
     {
         var root = new AircraftBrowserPanel { Dock = DockStyle.Fill, BackColor = Theme.Background };
-        var viewport = new Panel { BackColor = Theme.Background, AutoScroll = !compact };
-        var toolbar = new Panel { BackColor = Theme.Background };
+        var viewport = new AircraftBrowserPanel { BackColor = Theme.Background, AutoScroll = !compact };
+        var toolbar = new AircraftBrowserPanel { BackColor = Theme.Background };
         var filter = new TextBox { BackColor = Theme.Control, ForeColor = Theme.Text };
-        var label = new Label { Text = compact ? "Filter" : "Search", ForeColor = Theme.Text, TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Segoe UI", 13) };
+        string searchLabelKey = compact ? "Profiles.Filter" : "Profiles.Search";
+        var label = I18n(new Label { ForeColor = Theme.Text, TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Segoe UI", 13) }, searchLabelKey);
         toolbar.Controls.AddRange([label, filter]);
         bool favoritesOnly = false;
         int first = 0, visibleCount = 5, generation = 0;
@@ -19,21 +22,21 @@ public partial class Form1
         var cards = new List<AircraftCard>();
         bool arranging = false;
         string? nation = null, category = null;
-        var favoriteFilter = new AircraftFavoriteButton { BackColor = Theme.Background, AccessibleName = "Show favorites" };
+        var favoriteFilter = new AircraftFavoriteButton { BackColor = Theme.Background, AccessibleName = VT("Profiles.ShowFavorites") };
         toolbar.Controls.Add(favoriteFilter);
         var filters = new FlowLayoutPanel { WrapContents = false, AutoScroll = true, BackColor = Theme.Background };
         var tips = new ToolTip();
-        tips.SetToolTip(favoriteFilter, "Show favorites only");
+        tips.SetToolTip(favoriteFilter, VT("Profiles.ShowFavoritesOnly"));
         favoriteFilter.Click += (_, _) => { favoritesOnly = !favoritesOnly; favoriteFilter.Active = favoritesOnly;
-            favoriteFilter.AccessibleName = favoritesOnly ? "Show all aircraft" : "Show favorites";
-            tips.SetToolTip(favoriteFilter, favoritesOnly ? "Favorites only - click to show all aircraft" : "Show favorites only");
+            favoriteFilter.AccessibleName = favoritesOnly ? VT("Profiles.ShowAllAircraft") : VT("Profiles.ShowFavorites");
+            tips.SetToolTip(favoriteFilter, favoritesOnly ? VT("Profiles.FavoritesOnlyTip") : VT("Profiles.ShowFavoritesOnly"));
             first = 0; RefreshCards(); };
         if (!compact)
         {
             toolbar.Controls.Add(filters);
             foreach (string id in new[] { "", "usa", "germany", "ussr", "britain", "japan", "china", "italy", "france", "sweden", "israel" })
             {
-                var b = new Button { Width = 50, Height = 40, Text = id == "" ? "All" : "", FlatStyle = FlatStyle.Flat, BackColor = Theme.Control, ForeColor = Theme.Text };
+                var b = new Button { Width = 50, Height = 40, Text = id == "" ? VT("Profiles.All") : "", FlatStyle = FlatStyle.Flat, BackColor = Theme.Control, ForeColor = Theme.Text };
                 if (id != "")
                 {
                     string resource = typeof(Form1).Assembly.GetManifestResourceNames().First(n => n.EndsWith(".Nations." + id + ".png"));
@@ -41,7 +44,7 @@ public partial class Form1
                     using var image = Image.FromStream(stream); b.Image = new Bitmap(image, 40, 25);
                     b.Disposed += (_, _) => b.Image?.Dispose();
                 }
-                tips.SetToolTip(b, id == "" ? "All nations" : id);
+                tips.SetToolTip(b, id == "" ? VT("Profiles.AllNations") : id);
                 b.Click += (_, _) => { nation = id == "" ? null : id; foreach (Button sibling in filters.Controls.OfType<Button>().Where(x => x.Tag is null)) sibling.BackColor = sibling == b ? Color.DimGray : Theme.Control; RefreshCards(); };
                 filters.Controls.Add(b);
             }
@@ -50,22 +53,23 @@ public partial class Form1
                 var b = new Button { Width = 50, Height = 40, Tag = type, FlatStyle = FlatStyle.Flat, BackColor = Theme.Control,
                     Margin = new Padding(type == "Prop Plane" ? 22 : 3, 3, 3, 3) };
                 var icon = new Bitmap(44, 34); using (var g = Graphics.FromImage(icon)) AircraftIcons.Draw(g, new Rectangle(0, 0, 44, 34), type, Color.WhiteSmoke);
-                b.Image = icon; b.Disposed += (_, _) => icon.Dispose(); tips.SetToolTip(b, type);
+                b.Image = icon; b.Disposed += (_, _) => icon.Dispose(); tips.SetToolTip(b, type switch { "Prop Plane" => VT("Profiles.PropPlane"), "Jet Plane" => VT("Profiles.JetPlane"), _ => VT("Profiles.Helicopter") });
                 b.Click += (_, _) => { category = category == type ? null : type; foreach (Button sibling in filters.Controls.OfType<Button>().Where(x => x.Tag is string)) sibling.BackColor = (string)sibling.Tag! == category ? Color.DimGray : Theme.Control; RefreshCards(); };
                 filters.Controls.Add(b);
             }
         }
         if (!compact)
         {
-            var favorite = CreateSecondaryButton("Add to favorites");
-            var edit = CreateSecondaryButton("Edit");
-            var clone = CreateSecondaryButton("Clone");
+            var favorite = I18n(CreateSecondaryButton(VT("Profiles.AddFavorite")), "Profiles.AddFavorite");
+            var edit = I18n(CreateSecondaryButton(VT("Profiles.Edit")), "Profiles.Edit");
+            var clone = I18n(CreateSecondaryButton(VT("Profiles.Clone")), "Profiles.Clone");
             clone.Click += (_, _) => CloneAircraftProfile();
-            _deleteProfileButton = CreateResetButton("Delete");
+            _deleteProfileButton = I18n(CreateResetButton(VT("Profiles.Delete")), "Profiles.Delete");
             favorite.Click += (_, _) => { if (string.IsNullOrEmpty(_activeProfileName)) return; string key = _profileAircraftId ?? _profileId; if (!_favoriteAircraft.Remove(key)) _favoriteAircraft.Add(key); SaveApplicationSettings(false); AircraftProfilesChanged?.Invoke(); };
             edit.Click += (_, _) => EditProfileAircraft();
             _deleteProfileButton.Click += (_, _) => DeleteProfile();
             commands.AddRange([favorite, clone, edit, _deleteProfileButton]);
+            foreach (var command in commands) command.AutoEllipsis = true;
             toolbar.Controls.AddRange(commands.ToArray());
             root.Controls.Add(toolbar);
         }
@@ -87,7 +91,11 @@ public partial class Form1
                 int S(int n) => (int)Math.Round(n * dpi);
                 int gap = S(6), header = compact ? 0 : S(104), buttonWidth = S(160);
                 bool stacked = !compact && root.Width < S(1100);
-                if (stacked) header += S(44);
+                if (stacked)
+                {
+                    header += S(44);
+                    buttonWidth = Math.Min(buttonWidth, Math.Max(1, root.Width / Math.Max(1, commands.Count) - gap));
+                }
                 if (!compact) toolbar.SetBounds(0, 0, root.Width, header);
                 label.SetBounds(0, 0, S(75), compact ? toolbar.Height : S(44));
                 int searchWidth = compact ? Math.Min(S(104), toolbar.Width - label.Width - gap - S(44)) : stacked ? Math.Min(S(460), toolbar.Width - S(135)) :
@@ -125,6 +133,16 @@ public partial class Form1
         }
         previous.Click += (_, _) => { first = Math.Max(0, first - visibleCount); Arrange(); };
         next.Click += (_, _) => { first = Math.Min(Math.Max(0, cards.Count - visibleCount), first + visibleCount); Arrange(); };
+        if (compact)
+        {
+            viewport.MouseWheel += (_, e) =>
+            {
+                int maxFirst = Math.Max(0, cards.Count - visibleCount);
+                int direction = e.Delta < 0 ? 1 : -1;
+                first = Math.Clamp(first + direction, 0, maxFirst);
+                Arrange();
+            };
+        }
         root.SizeChanged += (_, _) => Arrange();
         toolbar.SizeChanged += (_, _) => Arrange();
         async void RefreshCards()
@@ -132,63 +150,171 @@ public partial class Form1
             if (root.IsDisposed) return;
             int version = ++generation;
             var pending = new List<(AircraftCard Card, AircraftInfo Aircraft)>();
-            foreach (var old in cards) old.Dispose();
-            cards.Clear();
-            if (!compact) commands[0].Text = _favoriteAircraft.Contains(_profileAircraftId ?? _profileId) ? "Remove from favorites" : "Add to favorites";
-            foreach (string name in GetProfileNames())
+            viewport.SuspendLayout();
+            try
             {
-                SavedBindingsFile profile;
-                try { profile = ReadProfile(name); } catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException) { continue; }
-                var aircraft = _aircraftDatabase?.GetById(profile.AircraftId);
-                if (favoritesOnly && !_favoriteAircraft.Contains(profile.AircraftId ?? profile.Id)) continue;
-                if (nation is not null && aircraft?.Nation != nation) continue;
-                if (category is not null && (aircraft?.FlightCategory ?? profile.AircraftType) != category) continue;
-                if (!AircraftSearchService.Normalize(name + " " + aircraft?.DisplayName).Contains(AircraftSearchService.Normalize(filter.Text))) continue;
-                var card = new AircraftCard { Text = AircraftSearchService.CleanName(aircraft?.DisplayName ?? name), Premium = aircraft?.IsPremium == true,
-                    Active = string.Equals(name, _activeProfileName, StringComparison.OrdinalIgnoreCase),
-                    Favorite = !compact && _favoriteAircraft.Contains(profile.AircraftId ?? profile.Id) };
-                card.Click += (_, _) => { if (!string.Equals(name, _activeProfileName, StringComparison.OrdinalIgnoreCase)) SwitchProfile(name); };
-                cards.Add(card); viewport.Controls.Add(card);
-                if (aircraft?.Id.StartsWith("universal-", StringComparison.Ordinal) == true)
+                foreach (var old in cards) old.Dispose();
+                cards.Clear();
+                if (!compact)
                 {
-                    var icon = new Bitmap(180, 120); using (var g = Graphics.FromImage(icon)) AircraftIcons.Draw(g, new Rectangle(0, 0, 180, 120), aircraft.FlightCategory!, Color.WhiteSmoke);
-                    card.SetArtwork(icon);
+                    bool aircraftProfileActive = !string.IsNullOrWhiteSpace(_activeProfileName);
+                    commands[0].Text = aircraftProfileActive && _favoriteAircraft.Contains(_profileAircraftId ?? _profileId)
+                        ? VT("Profiles.RemoveFavorite")
+                        : VT("Profiles.AddFavorite");
+                    foreach (Button command in commands) command.Enabled = aircraftProfileActive;
                 }
-                if (aircraft is not null) pending.Add((card, aircraft));
+
+                // The shared Default Profile is a template, not an aircraft. It is
+                // intentionally hidden from the compact Home strip, but the full
+                // Profiles page always pins its dedicated template card at the top-left.
+                if (!compact)
+                {
+                    var defaultCard = new AircraftCard
+                    {
+                        Tag = string.Empty,
+                        Text = VT("Profiles.DefaultProfile"),
+                        Active = string.IsNullOrWhiteSpace(_activeProfileName),
+                        AccessibleName = VT("Profiles.DefaultProfileTip")
+                    };
+                    defaultCard.SetArtwork(AircraftIcons.CreateDefaultProfileArtwork());
+                    defaultCard.Click += (_, _) =>
+                    {
+                        PreserveManualProfileSelection();
+                        if (!string.IsNullOrWhiteSpace(_activeProfileName)) SwitchToDefaultProfile();
+                        _openTrimDashboard?.Invoke();
+                    };
+                    cards.Add(defaultCard);
+                    viewport.Controls.Add(defaultCard);
+                }
+
+                foreach (string name in GetProfileNames())
+                {
+                    // Default Profile is a shared template, never an aircraft card.
+                    // It remains selectable where the template itself is edited, but
+                    // it must not occupy space in either the Home aircraft strip or
+                    // the full aircraft-card browser.
+                    if (string.Equals(name, DefaultProfileDisplayName, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    SavedBindingsFile profile;
+                    try { profile = ReadProfile(name); } catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException) { continue; }
+                    // The Custom Base Profile is an editing/template entry. Keep it in
+                    // the full Profiles browser (double-click opens its trim editor),
+                    // but do not advertise it as an aircraft on the compact main screen.
+                    if (compact && IsCustomBaseProfileName(name)) continue;
+                    var aircraft = _aircraftDatabase?.ResolveProfile(profile.AircraftId, profile.DetectedAircraftKey);
+                    if (favoritesOnly && !_favoriteAircraft.Contains(profile.AircraftId ?? profile.Id)) continue;
+                    if (nation is not null && aircraft?.Nation != nation) continue;
+                    if (category is not null && (aircraft?.FlightCategory ?? profile.AircraftType) != category) continue;
+                    if (!AircraftSearchService.Normalize(name + " " + aircraft?.DisplayName).Contains(AircraftSearchService.Normalize(filter.Text))) continue;
+                    var card = new AircraftCard { Tag = name, Text = AircraftSearchService.CleanName(aircraft?.DisplayName ?? name), Premium = aircraft?.IsPremium == true,
+                        Active = string.Equals(name, _activeProfileName, StringComparison.OrdinalIgnoreCase),
+                        Favorite = !compact && _favoriteAircraft.Contains(profile.AircraftId ?? profile.Id),
+                        // Mode badges belong to the full Profiles page only. The Home
+                        // strip should show aircraft names/artwork without DEFAULT/CUSTOM labels.
+                        ModeBadge = compact ? string.Empty : VT(profile.UseCustomControls ? "Profiles.CustomMode" : "Profiles.DefaultMode"),
+                        CustomMode = profile.UseCustomControls,
+                        AccessibleName = VF("Profiles.CardAccessible", AircraftSearchService.CleanName(aircraft?.DisplayName ?? name), profile.UseCustomControls ? VT("Profiles.CustomControlsLabel") : VT("Profiles.DefaultControlsLabel")) };
+                    card.Click += (_, _) =>
+                    {
+                        PreserveManualProfileSelection();
+                        if (!string.Equals(name, _activeProfileName, StringComparison.OrdinalIgnoreCase))
+                            SwitchProfile(name, refreshProfileUi: false);
+                        foreach (AircraftCard sibling in cards)
+                            sibling.Active = ReferenceEquals(sibling, card);
+                    };
+                    card.DoubleClick += (_, _) =>
+                    {
+                        if (compact) AircraftProfileEditorRequested?.Invoke(name);
+                        else OpenAircraftControlEditor(name);
+                    };
+                    cards.Add(card); viewport.Controls.Add(card);
+                    if (aircraft?.Id.StartsWith("universal-", StringComparison.Ordinal) == true)
+                    {
+                        card.SetArtwork(AircraftIcons.CreateFallbackArtwork(aircraft.FlightCategory ?? profile.AircraftType));
+                    }
+                    else
+                    {
+                        card.SetArtwork(AircraftIcons.CreateFallbackArtwork(aircraft?.FlightCategory ?? profile.AircraftType));
+                        if (aircraft is not null) pending.Add((card, aircraft));
+                    }
+                }
+                if (!compact)
+                {
+                    var add = new AircraftCard { Text = "+" };
+                    add.Click += (_, _) => CreateProfile(); cards.Add(add); viewport.Controls.Add(add);
+                }
+                Arrange();
             }
-            if (!compact)
+            finally { viewport.ResumeLayout(true); }
+            // Start visible-card artwork requests together. The asset cache limits
+            // network concurrency, while this avoids one slow/missing Wiki image
+            // blocking every card after it in the profile row.
+            await Task.WhenAll(pending.Select(async item =>
             {
-                var add = new AircraftCard { Text = "+" };
-                add.Click += (_, _) => CreateProfile(); cards.Add(add); viewport.Controls.Add(add);
-            }
-            Arrange();
-            foreach (var item in pending)
-            {
-                if (version != generation || root.IsDisposed) break;
+                if (version != generation || root.IsDisposed || item.Card.IsDisposed) return;
                 try
                 {
-                    string? path = _aircraftAssets is null ? null : await _aircraftAssets.GetIconAsync(item.Aircraft, _telemetryShutdown.Token);
-                    if (version != generation || root.IsDisposed) break;
-                    if (path is not null) { using var image = Image.FromFile(path); item.Card.SetArtwork(new Bitmap(image)); }
+                    string? path = _aircraftAssets is null ? null :
+                        await _aircraftAssets.GetIconAsync(item.Aircraft, _telemetryShutdown.Token);
+                    if (version != generation || root.IsDisposed || item.Card.IsDisposed) return;
+                    if (path is null)
+                    {
+                        item.Card.SetArtwork(AircraftIcons.CreateFallbackArtwork(item.Aircraft.FlightCategory ?? item.Aircraft.VehicleType));
+                        return;
+                    }
+                    using var image = Image.FromFile(path);
+                    item.Card.SetArtwork(new Bitmap(image));
                 }
                 catch (Exception ex) when (ex is OperationCanceledException or IOException or ArgumentException) { }
+            }));
+        }
+        void RefreshSelection()
+        {
+            if (root.IsDisposed) return;
+            foreach (var card in cards)
+                if (card.Tag is string name)
+                    card.Active = string.IsNullOrEmpty(name)
+                        ? string.IsNullOrWhiteSpace(_activeProfileName)
+                        : string.Equals(name, _activeProfileName, StringComparison.OrdinalIgnoreCase);
+            if (!compact)
+            {
+                bool active = !string.IsNullOrWhiteSpace(_activeProfileName);
+                commands[0].Text = active && _favoriteAircraft.Contains(_profileAircraftId ?? _profileId)
+                    ? VT("Profiles.RemoveFavorite")
+                    : VT("Profiles.AddFavorite");
+                foreach (var command in commands) command.Enabled = active;
             }
         }
+        AircraftProfileSelectionChanged += RefreshSelection;
         filter.TextChanged += (_, _) => { first = 0; RefreshCards(); };
         AircraftProfilesChanged += RefreshCards;
-        root.Disposed += (_, _) => { generation++; tips.Dispose(); AircraftProfilesChanged -= RefreshCards; if (compact) toolbar.Dispose(); };
+        root.Disposed += (_, _) => { generation++; tips.Dispose(); AircraftProfilesChanged -= RefreshCards; AircraftProfileSelectionChanged -= RefreshSelection; if (compact) toolbar.Dispose(); };
         root.HandleCreated += (_, _) => { RefreshCards(); if (!compact) { filters.CreateControl(); foreach (Control child in filters.Controls) child.CreateControl(); } };
         return root;
     }
+
+    private static bool IsCustomBaseProfileName(string? name)
+    {
+        string normalized = AircraftSearchService.Normalize(name ?? string.Empty);
+        return normalized is "CUSTOMBASEPROFILE" or "CUSTOMBASE" or "BASECUSTOMPROFILE" or "CUSTOMDEFAULTBASE";
+    }
 }
 
-internal sealed class AircraftBrowserPanel : Panel { }
+internal sealed class AircraftBrowserPanel : Panel
+{
+    public AircraftBrowserPanel()
+    {
+        DoubleBuffered = true;
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
+                 ControlStyles.ResizeRedraw, true);
+    }
+}
 
 internal sealed class AircraftFavoriteButton : Button
 {
     private bool _active;
     [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
-    public bool Active { get => _active; set { _active = value; Invalidate(); } }
+    public bool Active { get => _active; set { if (_active == value) return; _active = value; Invalidate(); } }
     public AircraftFavoriteButton()
     {
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
@@ -245,14 +371,24 @@ internal sealed class AircraftCard : Button
 {
     private Image? _artwork;
     [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
-    public bool Active { get; set; }
+    public bool Active
+    {
+        get => _active;
+        set { if (_active == value) return; _active = value; Invalidate(); }
+    }
+    private bool _active;
     [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     public bool Premium { get; set; }
     [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     public bool Favorite { get; set; }
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public string ModeBadge { get; set; } = string.Empty;
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public bool CustomMode { get; set; }
     public AircraftCard()
     {
-        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint |
+            ControlStyles.StandardClick | ControlStyles.StandardDoubleClick, true);
         Cursor = Cursors.Hand; ForeColor = Color.WhiteSmoke; FlatStyle = FlatStyle.Flat;
         AccessibleRole = AccessibleRole.PushButton;
     }
@@ -295,13 +431,34 @@ internal sealed class AircraftCard : Button
     }
     protected override void OnPaint(PaintEventArgs e)
     {
+        if (Width < 20 || Height < 20) return;
         using var font = new Font("Segoe UI", Text == "+" ? Math.Min(32, Height * .4f) : Math.Clamp(Height * .21f, 11, 24), FontStyle.Regular, GraphicsUnit.Pixel);
         if (Text != "+")
         {
             PaintAircraft(e.Graphics, ClientRectangle, Text, _artwork, Premium, Active, font);
+            // Profile mode belongs at the lower-right of full Profiles cards.
+            // If the aircraft is a favorite, the star owns the far-right slot and
+            // the DEFAULT/CUSTOM badge sits immediately to its left.
+            float favoriteRadius = Favorite ? Math.Clamp(Height * .13f, 8, 18) : 0f;
+            int favoriteSlot = Favorite ? (int)Math.Ceiling(favoriteRadius * 2f) + 12 : 0;
+            if (!string.IsNullOrWhiteSpace(ModeBadge))
+            {
+                using var badgeFont = new Font("Segoe UI Semibold", Math.Clamp(Height * .11f, 8, 12), FontStyle.Regular, GraphicsUnit.Pixel);
+                Size badgeText = TextRenderer.MeasureText(ModeBadge, badgeFont);
+                int badgeWidth = Math.Min(Math.Max(36, Width - 16 - favoriteSlot), badgeText.Width + 18);
+                int badgeHeight = badgeText.Height + 7;
+                int badgeX = Math.Max(8, Width - 8 - favoriteSlot - badgeWidth);
+                int badgeY = Math.Max(8, Height - 8 - badgeHeight);
+                var badgeRect = new Rectangle(badgeX, badgeY, badgeWidth, badgeHeight);
+                using var badgeFill = new SolidBrush(Color.FromArgb(205, 15, 26, 32));
+                using var badgeEdge = new Pen(CustomMode ? Theme.Accent : Color.FromArgb(110, 145, 155));
+                e.Graphics.FillRectangle(badgeFill, badgeRect); e.Graphics.DrawRectangle(badgeEdge, badgeRect);
+                TextRenderer.DrawText(e.Graphics, ModeBadge, badgeFont, badgeRect, CustomMode ? Color.Wheat : Color.Gainsboro,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+            }
             if (Favorite)
             {
-                float radius = Math.Clamp(Height * .13f, 8, 18);
+                float radius = favoriteRadius;
                 float cx = Width - radius - 8, cy = Height - radius - 8;
                 var points = Enumerable.Range(0, 10).Select(i =>
                 {

@@ -24,6 +24,28 @@ internal static class WarThunderTelemetry
         catch (ArgumentException) { return null; }
     }
 
+
+    public static bool TryGetAircraftIdentity(string indicators, string state, out string aircraftType)
+    {
+        aircraftType = string.Empty;
+        try
+        {
+            using var instruments = JsonDocument.Parse(indicators);
+            using var flight = JsonDocument.Parse(state);
+            JsonElement i = instruments.RootElement, s = flight.RootElement;
+            if (!Valid(i) || !Valid(s)) return false;
+            if (!i.TryGetProperty("type", out var type) || type.ValueKind != JsonValueKind.String ||
+                string.IsNullOrWhiteSpace(type.GetString())) return false;
+            // IAS is specific to aircraft flight telemetry and prevents tank/ship
+            // sessions from creating VTrim aircraft profiles.
+            if (!Number(s, "IAS, km/h", out double speed) || speed < 0 || speed > 5000) return false;
+            aircraftType = type.GetString()!.Trim();
+            return aircraftType.Length > 0;
+        }
+        catch (JsonException) { return false; }
+        catch (ArgumentException) { return false; }
+    }
+
     public static bool TryParse(string indicators, string state, double time, out AircraftSample sample) =>
         TryParse(indicators, state, time, out sample, out _);
 

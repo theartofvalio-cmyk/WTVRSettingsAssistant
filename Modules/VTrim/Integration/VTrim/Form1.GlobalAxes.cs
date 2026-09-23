@@ -4,6 +4,7 @@ public partial class Form1
 {
     private sealed class GlobalAxes
     {
+        // Legacy only: v2.2 stores trim bindings in Default/aircraft controls.
         public Dictionary<string, SavedActionBinding>? Bindings { get; set; }
         public SavedAxisSource? Roll { get; set; }
         public SavedAxisSource? Pitch { get; set; }
@@ -18,7 +19,7 @@ public partial class Form1
     private HashSet<string> _favoriteAircraft = new();
     private void CaptureGlobalAxes()
     {
-        _globalAxes = new GlobalAxes { Bindings = CaptureCurrentProfile().Bindings, Roll = SaveAxisSource(_rollAxis), Pitch = SaveAxisSource(_pitchAxis),
+        _globalAxes = new GlobalAxes { Roll = SaveAxisSource(_rollAxis), Pitch = SaveAxisSource(_pitchAxis),
             Rudder = SaveAxisSource(_rudderAxis), InvertRoll = _invertRollBox.Checked,
             InvertPitch = _invertPitchBox.Checked, InvertRudder = _invertRudderBox.Checked,
             DeviceGuid = _selectedDeviceGuid?.ToString("D") ?? "", DeviceName = _selectedDeviceName };
@@ -39,5 +40,12 @@ public partial class Form1
         _selectedDeviceGuid = Guid.TryParse(_globalAxes.DeviceGuid, out var guid) ? guid : null;
     }
     private Action? _openProfiles;
+    private Action? _openTrimDashboard;
+    private Action? _openCurves;
     public void OpenAircraftProfiles() => _openProfiles?.Invoke();
+    public void OpenAircraftProfileEditor(string profileName)
+    {
+        _openProfiles?.Invoke();
+        OpenAircraftControlEditor(profileName);
+    }
 }

@@ -13,21 +13,23 @@
     <RootNamespace>HOTASTrimUtility</RootNamespace>
     <Product>VTrim - Virtual Trim for HOTAS &amp; Rudder Pedals</Product>
     <Description>Virtual pitch, roll and rudder trim for HOTAS controllers and rudder pedals.</Description>
-    <Version>1.8.8</Version>
-    <AssemblyVersion>1.8.8.0</AssemblyVersion>
-    <FileVersion>1.8.8.0</FileVersion>
+    <Version>2.1</Version>
+    <AssemblyVersion>2.1.0.0</AssemblyVersion>
+    <FileVersion>2.1.0.0</FileVersion>
     <ApplicationIcon>VTrim.ico</ApplicationIcon>
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="LateralAssistController.cs" />
+    <EmbeddedResource Include="Assets/**/*.png" />
     <Compile Include="ScrollPagePanel.cs" />
+    <Compile Include="AircraftDatabase.cs;Form1.AircraftProfiles.cs;Form1.ProfileCards.cs;Form1.GlobalAxes.cs;Form1.AircraftControlEditor.cs" />
     <Content Include="VTrim.ico" />
-    <Compile Include="Program.cs;VirtualOutput.cs;Form1.Embedded.cs;Form1.VirtualOutput.cs;Form1.cs;Form1.Instructor.cs;Form1.Curves.cs;InstructorController.cs;WarThunderTelemetry.cs;NativeVJoy.cs;AircraftIcons.cs;GameWindow.cs;VJoySetup.cs;StoreTrimController.cs;AxisResponse.cs" />
+    <Compile Include="Program.cs;VirtualOutput.cs;Form1.Embedded.cs;Form1.VirtualOutput.cs;Form1.cs;VTrimTranslations.cs;VTrimTranslations.Release21.cs;Form1.Instructor.cs;Form1.Curves.cs;InstructorController.cs;WarThunderTelemetry.cs;NativeVJoy.cs;VJoyNativeResolver.cs;AircraftIcons.cs;GameWindow.cs;VJoySetup.cs;StoreTrimController.cs;AxisResponse.cs;VTrimSelfTest.cs;XInputGamepad.cs" />
     <PackageReference Include="Vortice.DirectInput" Version="3.8.3" />
     <Content Include="Native/x86/vJoyInterface.dll">
-      <Link>vJoyInterface.dll</Link><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory><CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <Link>Drivers/vJoy/vJoyInterface.dll</Link><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory><CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
     </Content>
   </ItemGroup>

@@ -4,6 +4,7 @@
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <UseWindowsForms>true</UseWindowsForms>
+    <UseWPF>false</UseWPF>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -12,14 +13,13 @@
     <AssemblyName>WTVRSettingsAssistant</AssemblyName>
     <RootNamespace>WTVRSettingsAssistant</RootNamespace>
     <ApplicationIcon>Icon.ico</ApplicationIcon>
-    <Version>2.0</Version>
-    <AssemblyVersion>2.0.0.0</AssemblyVersion>
-    <FileVersion>2.0.0.0</FileVersion>
-    <RuntimeIdentifier>win-x86</RuntimeIdentifier>
-    <SelfContained>true</SelfContained>
-    <PublishSingleFile>true</PublishSingleFile>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <Version>2.0.1</Version>
+    <AssemblyVersion>2.0.1.0</AssemblyVersion>
+    <FileVersion>2.0.1.0</FileVersion>
+    <!-- Keep Visual Studio / dotnet build output small. The release publish script
+         supplies win-x86 + self-contained explicitly and creates a single-file app. -->
+    <SelfContained>false</SelfContained>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
@@ -30,22 +30,29 @@
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
     </Content>
-    <Compile Remove="verification/**/*.cs" />
-    <EmbeddedResource Include="Assets/*.png;Assets/*.wav;Icon.ico" />
-    <Content Include="ThirdParty/XRNeckSafer/XR_APILAYER_NOVENDOR_XRNeckSafer.dll">
-      <Link>NeckAssist/OpenXR/XR_APILAYER_NOVENDOR_XRNeckSafer.dll</Link>
+
+    <Content Include="../Modules/VTrim/Integration/VTrim/Native/x86/vJoyInterface.dll">
+      <Link>vJoyInterface.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
     </Content>
-    <Content Include="ThirdParty/XRNeckSafer/XR_APILAYER_NOVENDOR_XRNeckSafer.json">
-      <Link>NeckAssist/OpenXR/XR_APILAYER_NOVENDOR_XRNeckSafer.json</Link>
+    <Compile Remove="verification/**/*.cs" />
+    <EmbeddedResource Include="Assets/**/*.png;Assets/**/*.wav;Assets/**/*.ico;Icon.ico" />
+    <Content Include="ThirdParty/XRNeckSafer/NeckAssistant.dll">
+      <Link>NeckAssistant.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </Content>
+    <Content Include="ThirdParty/XRNeckSafer/NeckAssistant.json">
+      <Link>Drivers/NeckAssistant.json</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
     </Content>
     <Content Include="ThirdParty/XRNeckSafer/LICENSE-XRNeckSafer.txt">
-      <Link>NeckAssist/OpenXR/LICENSE-XRNeckSafer.txt</Link>
+      <Link>Licenses/XRNeckSafer/LICENSE-XRNeckSafer.txt</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
@@ -53,11 +60,28 @@
     <ProjectReference Include="../Modules/VTrim/Integration/VTrim/VTrim.Embedded.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
   </ItemGroup>
   <Target Name="RemoveNativeVJoyCompileReference" AfterTargets="ResolvePackageAssets">
     <ItemGroup>
       <ResolvedCompileFileDefinitions Remove="@(ResolvedCompileFileDefinitions)" Condition="'%(Filename)%(Extension)' == 'vJoyInterface.dll'" />
     </ItemGroup>
   </Target>
-</Project>
 
+  <!-- WebView2 ships both WinForms and WPF wrappers. This application is
+       WinForms-only; remove the unused WPF wrapper before RAR so it cannot
+       introduce the WindowsBase 4.0/5.0 MSB3277 conflict. -->
+  <Target Name="RemoveUnusedWebView2WpfReference"
+          BeforeTargets="ResolveAssemblyReferences"
+          Condition="'$(UseWPF)' != 'true'">
+    <ItemGroup>
+      <Reference Remove="@(Reference)"
+                 Condition="'%(Reference.Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+  <Target Name="RemoveUnusedWebView2WpfCopyLocal" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+</Project>

@@ -55,7 +55,7 @@ internal sealed partial class SwitchEditorForm
     private void RecordAdvanced()
     {
         if (_device.SelectedIndex < 0) return;
-        using var recorder = new SwitchGestureRecorder(_devices[_device.SelectedIndex]);
+        using var recorder = new SwitchGestureRecorder(_devices[_device.SelectedIndex], _languageCode);
         if (recorder.ShowDialog(this) != DialogResult.OK) return;
         var gesture = recorder.Result;
         int firstMovement = gesture[1].ElapsedMs;

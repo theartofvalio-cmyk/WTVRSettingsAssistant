@@ -36,15 +36,14 @@ public partial class Form1
         var header = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 3,
+            ColumnCount = 2,
             RowCount = 2,
             Margin = Padding.Empty,
             Padding = new Padding(18, 9, 18, 9),
             BackColor = Theme.Header
         };
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 86F));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 69F));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 31F));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         header.RowStyles.Add(new RowStyle(SizeType.Percent, 54F));
         header.RowStyles.Add(new RowStyle(SizeType.Percent, 46F));
 
@@ -78,25 +77,11 @@ public partial class Form1
             UseMnemonic = false,
             Tag = "i18n:Header.Subtitle"
         };
-        var description = new Label
-        {
-            Text = VT("Header.Description"),
-            Dock = DockStyle.Fill,
-            Margin = new Padding(12, 0, 0, 0),
-            Font = new Font("Segoe UI", 9.5F),
-            ForeColor = Theme.Muted,
-            TextAlign = ContentAlignment.MiddleRight,
-            AutoEllipsis = false,
-            UseMnemonic = false,
-            Tag = "i18n:Header.Description"
-        };
 
         header.Controls.Add(logo, 0, 0);
         header.SetRowSpan(logo, 2);
         header.Controls.Add(title, 1, 0);
         header.Controls.Add(subtitle, 1, 1);
-        header.Controls.Add(description, 2, 0);
-        header.SetRowSpan(description, 2);
         return header;
     }
     private void ApplyEmbeddedAviationTheme(Control root)

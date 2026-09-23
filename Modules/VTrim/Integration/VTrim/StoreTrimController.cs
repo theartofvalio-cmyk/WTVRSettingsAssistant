@@ -82,7 +82,11 @@ internal sealed class AutoStoreTrimAxis
     {
         if (!enabled || !double.IsFinite(now) || !double.IsFinite(raw) || !double.IsFinite(command))
         { Reset(); return null; }
-        if (double.IsFinite(_last) && (now < _last || now - _last > .25)) Reset();
+        // A normal polling hiccup must not erase a hold immediately before the
+        // spring-return sample. The previous .25 s gap limit was the same length
+        // as the hold-to-arm interval, so a perfectly valid 250-300 ms sample
+        // cadence could never arm Auto Store Trim.
+        if (double.IsFinite(_last) && (now < _last || now - _last > .75)) Reset();
         _last = now;
         if (Math.Abs(raw) <= Math.Max(.02, deadzone))
         {

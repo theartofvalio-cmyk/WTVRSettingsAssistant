@@ -9,9 +9,16 @@ internal sealed class OpenXrNeckBackend : IDisposable
     private const string MappingName = "XRNeckSaferSHM";
     private const int MappingSize = 80;
     private const string LayerRegistryPath = @"SOFTWARE\Khronos\OpenXR\1\ApiLayers\Implicit";
-    private const string ManifestFileName = "XR_APILAYER_NOVENDOR_XRNeckSafer.json";
+    private const string ManifestFileName = "NeckAssistant.json";
+    private const string LegacyManifestFileName = "XR_APILAYER_NOVENDOR_XRNeckSafer.json";
+    private const string DllFileName = "NeckAssistant.dll";
+    private const string LegacyDllFileName = "XR_APILAYER_NOVENDOR_XRNeckSafer.dll";
     private const string LayerName = "XR_APILAYER_NOVENDOR_XRNeckSafer";
+    // The UI normally sends motion state every ~16 ms. 250 ms was too strict:
+    // a transient UI/DirectInput stall looked exactly like a released Hold button.
+    private const double MotionCommandTimeoutSeconds = 1.5;
     private readonly string _manifestPath;
+    private readonly string _layerDllPath;
     private readonly bool _offlinePreview;
     private readonly MemoryMappedFile _mapping;
     private readonly MemoryMappedViewAccessor _accessor;
@@ -55,7 +62,7 @@ internal sealed class OpenXrNeckBackend : IDisposable
             if (_disposed || _motionSettings is null) return;
             double age = (System.Diagnostics.Stopwatch.GetTimestamp() - _lastCommand) /
                 (double)System.Diagnostics.Stopwatch.Frequency;
-            UpdateMotionCore(_motionSettings, _motionActive && age < 0.25);
+            UpdateMotionCore(_motionSettings, _motionActive && age < MotionCommandTimeoutSeconds);
         }
     }
 
@@ -103,9 +110,16 @@ internal sealed class OpenXrNeckBackend : IDisposable
         float targetYaw = pressMode ? (runtimeActive && _simpleDirectionLatched ? _pressDirection * settings.PressRotationAngle : 0) :
             (_yawEngaged ? settings.YawBezier.Evaluate(yaw, settings.StartAngle, settings.MaximumViewAngle, 110, settings.YawCurvature, settings.NaturalRearView, settings.YawNaturalResumeAngle) - yaw : 0);
         float targetPitch = !pressMode && _pitchEngaged ? settings.PitchBezier.Evaluate(pitch, settings.PitchStartAngle, settings.PitchMaximumViewAngle, 80, settings.PitchCurvature, settings.NaturalRearView, settings.PitchNaturalResumeAngle) - pitch : 0;
-        float transitionTau = 0.52f - settings.TransitionSpeed / 100f * 0.46f;
-        _filteredYaw = Stabilize(_filteredYaw, targetYaw, ref _yawVelocity, dt, transitionTau);
-        _filteredPitch = Stabilize(_filteredPitch, targetPitch, ref _pitchVelocity, dt, transitionTau);
+        float transitionAmount = Math.Clamp(settings.TransitionSpeed / 100f, 0.01f, 1f);
+        float transitionTau = 0.52f - transitionAmount * 0.46f;
+        // A large Simple-mode offset can otherwise peak above 400 deg/s. At a
+        // 90 Hz headset that is roughly a 5-degree visual jump per frame even
+        // though the mathematical curve itself is continuous. Bound angular
+        // velocity so the same transition is delivered in smaller increments.
+        float yawRateLimit = 80f + transitionAmount * 160f;
+        float pitchRateLimit = 60f + transitionAmount * 120f;
+        _filteredYaw = Stabilize(_filteredYaw, targetYaw, ref _yawVelocity, dt, transitionTau, yawRateLimit);
+        _filteredPitch = Stabilize(_filteredPitch, targetPitch, ref _pitchVelocity, dt, transitionTau, pitchRateLimit);
         if (!settings.Enabled) _filteredYaw = _filteredPitch = _yawVelocity = _pitchVelocity = 0;
         // The native layer supports externally supplied offsets when its built-in
         // linear mapping is disabled. Only write our fields, preserving telemetry.
@@ -121,16 +135,35 @@ internal sealed class OpenXrNeckBackend : IDisposable
         else if (engaged && absolute <= Math.Min(release, start - 2)) engaged = false;
     }
 
-    private static float Stabilize(float previous, float target, ref float velocity, float dt, float tau)
+    private static float Stabilize(float previous, float target, ref float velocity, float dt, float tau, float maximumVelocity)
     {
-        // Exact critically damped response: continuous velocity at activation and
-        // reversal, independent of update cadence, with no angle quantization.
+        // Exact critically damped response, followed by a physical angular-rate
+        // ceiling. The ceiling prevents large 150-180 degree Simple transitions
+        // from becoming visible multi-degree steps at normal VR refresh rates.
         float omega = 2f / Math.Max(0.06f, tau);
         float error = previous - target;
         float combined = velocity + omega * error;
         float decay = MathF.Exp(-omega * dt);
-        velocity = (velocity - omega * combined * dt) * decay;
-        return target + (error + combined * dt) * decay;
+        float nextVelocity = (velocity - omega * combined * dt) * decay;
+        float next = target + (error + combined * dt) * decay;
+
+        float maximumStep = Math.Max(0.01f, maximumVelocity) * dt;
+        float delta = next - previous;
+        if (Math.Abs(delta) > maximumStep)
+        {
+            next = previous + MathF.CopySign(maximumStep, delta);
+            nextVelocity = (next - previous) / Math.Max(0.001f, dt);
+        }
+
+        // Never let numerical residue carry the filter past a stationary target.
+        if ((target - previous > 0 && next > target) || (target - previous < 0 && next < target))
+        {
+            next = target;
+            nextVelocity = 0;
+        }
+
+        velocity = nextVelocity;
+        return next;
     }
 
     private static float Extra(float angle, int start, int maximum, int limit) =>
@@ -171,14 +204,29 @@ internal sealed class OpenXrNeckBackend : IDisposable
     public OpenXrNeckBackend(string appFolder, bool offlinePreview = false, string? mappingName = null)
     {
         _offlinePreview = offlinePreview;
-        _manifestPath = Path.GetFullPath(Path.Combine(appFolder, "NeckAssist", "OpenXR", ManifestFileName));
+        // Clean portable layout: keep the native DLL beside the EXE and the
+        // OpenXR manifest under Drivers. Retain old locations/names as upgrade
+        // fallbacks so existing installations do not lose Neck Assistant.
+        string manifest = Path.GetFullPath(Path.Combine(appFolder, "Drivers", ManifestFileName));
+        string dll = Path.GetFullPath(Path.Combine(appFolder, DllFileName));
+        if (!File.Exists(manifest))
+        {
+            string legacyRoot = Path.GetFullPath(Path.Combine(appFolder, LegacyManifestFileName));
+            string legacyNeck = Path.GetFullPath(Path.Combine(appFolder, "NeckAssist", "OpenXR", LegacyManifestFileName));
+            string legacyComponents = Path.GetFullPath(Path.Combine(appFolder, "Components", "NeckAssist", "OpenXR", LegacyManifestFileName));
+            manifest = File.Exists(legacyRoot) ? legacyRoot : File.Exists(legacyNeck) ? legacyNeck : legacyComponents;
+            string legacyDir = Path.GetDirectoryName(manifest)!;
+            string legacyDll = Path.Combine(legacyDir, LegacyDllFileName);
+            if (File.Exists(legacyDll)) dll = legacyDll;
+        }
+        _manifestPath = manifest;
+        _layerDllPath = dll;
         _mapping = MemoryMappedFile.CreateOrOpen(mappingName ?? (offlinePreview ? "NeckPreview-" + Guid.NewGuid() : MappingName), MappingSize);
         _accessor = _mapping.CreateViewAccessor(0, MappingSize, MemoryMappedFileAccess.ReadWrite);
         _motionTimer = new System.Threading.Timer(MotionTick, null, 4, 4);
     }
 
-    public bool FilesAvailable => File.Exists(_manifestPath) &&
-                                  File.Exists(Path.Combine(Path.GetDirectoryName(_manifestPath)!, "XR_APILAYER_NOVENDOR_XRNeckSafer.dll"));
+    public bool FilesAvailable => File.Exists(_manifestPath) && File.Exists(_layerDllPath);
 
     public bool IsRegistered
     {
@@ -321,7 +369,8 @@ internal sealed class OpenXrNeckBackend : IDisposable
 
     private static bool LooksLikeNeckSaferManifest(string valueName)
     {
-        if (valueName.EndsWith(ManifestFileName, StringComparison.OrdinalIgnoreCase)) return true;
+        if (valueName.EndsWith(ManifestFileName, StringComparison.OrdinalIgnoreCase) ||
+            valueName.EndsWith(LegacyManifestFileName, StringComparison.OrdinalIgnoreCase)) return true;
         try
         {
             return File.Exists(valueName) && File.ReadAllText(valueName).Contains(LayerName, StringComparison.OrdinalIgnoreCase);

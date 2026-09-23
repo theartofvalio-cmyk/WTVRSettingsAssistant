@@ -10,6 +10,8 @@ internal static partial class AppText
     {
         AddNeckTooltipTranslations();
         AddFlapsTranslations();
+        AddRelease21Translations();
+        AddRelease21LateTranslations();
     }
     private static readonly LanguageOption[] Options =
     {
@@ -21,9 +23,11 @@ internal static partial class AppText
         new("pt", "Português"),
         new("pl", "Polski"),
         new("ru", "Русский"),
+        new("uk", "Українська"),
         new("tr", "Türkçe"),
         new("el", "Ελληνικά"),
         new("ro", "Română"),
+        new("he", "עברית"),
         new("zh-Hans", "简体中文"),
     };
 
@@ -63,7 +67,7 @@ internal static partial class AppText
             ["Assistant.EnableKeybind"] = "Включи KeyBind Assistant", ["Assistant.AdvancedSwitch"] = "Advanced Switch Bindings", ["Assistant.BindInput"] = "ЗАДАЙ БУТОН", ["Assistant.Back"] = "НАЗАД", ["Assistant.EnableNeck"] = "Включи Neck Assistant", ["Assistant.Enable"] = "Включи", ["Assistant.EnableUpDown"] = "Включи нагоре/надолу", ["Assistant.AdvancedToggle"] = "ADVANCED ПРЕВКЛЮЧВАНЕ", ["Assistant.Hold"] = "ЗАДЪРЖАНЕ", ["Assistant.Toggle"] = "ПРЕВКЛЮЧВАНЕ", ["Assistant.Advanced"] = "ADVANCED", ["Assistant.Simple"] = "SIMPLE", ["Assistant.PositionComp"] = "Компенсирай спрямо седящата позиция", ["Assistant.LinkOn"] = "Свързани оси: ВКЛ.", ["Assistant.LinkOff"] = "Свързани оси: ИЗКЛ.", ["Assistant.RearOn"] = "Rear-view boost: ВКЛ.", ["Assistant.RearOff"] = "Rear-view boost: ИЗКЛ.",
             ["Assistant.Clear"] = "ИЗЧИСТИ", ["Assistant.Active"] = "● АКТИВНО", ["Assistant.Off"] = "○ ИЗКЛ.", ["Assistant.RecenterCombo"] = "RECENTER КОМБО", ["Assistant.SimpleHold"] = "SIMPLE ЗАДЪРЖАНЕ", ["Assistant.Yaw"] = "ЛЯВО / ДЯСНО (YAW)", ["Assistant.Pitch"] = "НАГОРЕ / НАДОЛУ (PITCH)",
             ["Neck.Warning"] = "Постепенно увеличава виртуалния yaw след ъгъла на активиране. Започни внимателно — силното усилване може да причини дискомфорт.", ["Neck.ActivationHint"] = "Използвай ON / OFF ключа или зададената комбинация. Натисни веднъж за включване, пак за изключване.", ["Neck.GraphHelp"] = "Плъзни жълтото за активиране, оранжевото за освобождаване и зеленото за максимален изглед. Плъзгачите се синхронизират.", ["Neck.GraphLegend"] = "Жълто: активиране • Оранжево: освобождаване • Зелено: максимален изглед • Червено: headset • transition контролира плавността", ["Neck.RearBoostHelp"] = "REAR-VIEW BOOST: допълнителната ротация се добавя рано; след boost-а главата и изгледът продължават 1:1.", ["Neck.StandardHelp"] = "STANDARD: допълнителната ротация расте през целия завой. Плъзгай жълт/оранжев/зелен маркер или използвай плъзгачите.", ["Neck.Runtime"] = "Runtime: {0}", ["Neck.OpenXrEnableFailed"] = "OpenXR layer не можа да бъде включен: {0}", ["Neck.OffStatus"] = "Neck Assistant е изключен.", ["Neck.LiveStatus"] = "Headset е свързан — настройките се прилагат live; не е нужен рестарт на играта за промени по плъзгачите.", ["Neck.NoTelemetryStatus"] = "Layer е включен, но няма движение от headset-а. Стартирай VR играта след като включиш Neck Assistant веднъж.", ["Neck.NotRegisteredStatus"] = "Layer е инсталиран, но не е регистриран. Изключи и включи Neck Assistant веднъж.", ["Neck.MissingBackendStatus"] = "Липсва native backend компонент в този build.", ["Neck.HeadTurn"] = "ЗАВЪРТАНЕ НА ГЛАВА →", ["Neck.VirtualView"] = "ВИРТУАЛЕН ИЗГЛЕД →", ["Neck.AssistStarts"] = "ASSIST СТАРТИРА", ["Neck.WaitingTelemetry"] = "Изчаква се headset telemetry", ["Neck.TelemetryCaption"] = "ЧЕРВЕНО: headset {0:0}°   ЗЕЛЕНО: настроен изглед {1:0}°   Отчетен изглед: {2:0}°", ["Neck.VerticalAxis"] = "ВЕРТИКАЛНО · НАГОРЕ / НАДОЛУ", ["Neck.HorizontalAxis"] = "ХОРИЗОНТАЛНО · ЛЯВО / ДЯСНО", ["Neck.StateOff"] = "ИЗКЛ.", ["Neck.StateWaiting"] = "ИЗЧАКВА HEADSET", ["Neck.StateActive"] = "ASSIST АКТИВЕН", ["Neck.StateBelow"] = "ПОД ЪГЪЛА НА АКТИВИРАНЕ", ["Neck.VirtualViewUp"] = "Виртуален изглед ↑", ["Neck.HeadAxis"] = "{0}° глава", ["Neck.CurveDisabledCaption"] = "Включи up/down assistance, за да редактираш тази крива", ["Neck.CurveTelemetryCaption"] = "Червена глава: {0:0}°   Приложен изглед: {1:0}°", ["Neck.CurveDragCaption"] = "Плъзгай маркерите за активиране, освобождаване и максимален изглед", ["Neck.CurveDragLegend"] = "Жълто = активиране · оранжево = освобождаване · зелено = максимален изглед", ["Binding.Title"] = "Задай клавиатура, мишка или HOTAS input", ["Binding.Prompt"] = "Натисни {0} input или комбинация", ["Binding.Instructions"] = "Освободи задържаните бутони, после натисни нов клавиш, бутон на мишка, HOTAS бутон или комбинация.", ["Binding.Assign"] = "Запази", ["Binding.Save"] = "Запази", ["Binding.TryAgain"] = "Опитай пак", ["Binding.Cancel"] = "Отказ", ["Binding.WaitingRelease"] = "Освободи всички вече задържани бутони или клавиши.\nСледващият нов input ще бъде хванат.", ["Binding.ReadyStatus"] = "Готово. Натисни новия клавиш, бутон на мишка, HOTAS бутон или комбинация.", ["Binding.RetryStatus"] = "Натисни комбинацията, после натисни Запази.", ["Binding.SaveStatus"] = "{0}\nНатисни Запази, за да използваш този binding, или Отказ, за да го оставиш непроменен.", ["Binding.ReleaseStatus"] = "{0}\nОсвободи бутона/бутоните, после натисни Запази.",
-            ["Keybind.Description"] = "Тези действия са вградени в War Thunder, но не се виждат в менюто Controls.\nИзползвай тази страница, за да зададеш клавиш, мишка, HOTAS бутон или комбинация към командата по-долу.", ["Keybind.Action"] = "ДЕЙСТВИЕ В WAR THUNDER", ["Keybind.Command"] = "КОМАНДА ОТ КЛАВИАТУРА", ["Keybind.Input"] = "ТВОЯТ INPUT", ["Keybind.HeadUp"] = "VR позиция на глава нагоре", ["Keybind.HeadDown"] = "VR позиция на глава надолу", ["Keybind.Map"] = "Смени картата към бойното поле", ["Keybind.AdvancedDescription"] = "Създай custom switch позиции и задай всяка позиция към клавиш или бутон на мишката.", ["Keybind.ManageSwitches"] = "УПРАВЛЯВАЙ CUSTOM SWITCHES", ["Keybind.Notice"] = "Важно: дръж WT VR Settings Assistant включен, докато използваш тези bindings. Ако War Thunder работи като administrator, стартирай и приложението като administrator.",
+            ["Keybind.Description"] = "Тези действия са вградени в War Thunder, но не се виждат в менюто Controls.\nИзползвай тази страница, за да зададеш клавиш, мишка, HOTAS бутон или комбинация към командата по-долу.", ["Keybind.Action"] = "ДЕЙСТВИЕ В WAR THUNDER", ["Keybind.Command"] = "КОМАНДА ОТ КЛАВИАТУРА", ["Keybind.Input"] = "ТВОЯТ INPUT", ["Keybind.HeadUp"] = "VR позиция на глава нагоре", ["Keybind.HeadDown"] = "VR позиция на глава надолу", ["Keybind.Map"] = "Смени картата към бойното поле", ["Keybind.AdvancedDescription"] = "Създай custom switch позиции и задай всяка позиция към клавиш или бутон на мишката.", ["Keybind.ManageSwitches"] = "УПРАВЛЯВАЙ CUSTOM SWITCHES", ["Keybind.Notice"] = "Важно: дръж War Thunder VR Assistant включен, докато използваш тези bindings. Ако War Thunder работи като administrator, стартирай и приложението като administrator.",
             ["Switch.AdvancedBindings"] = "Advanced Switch Bindings", ["Switch.AddSwitch"] = "Добави switch", ["Switch.Options"] = "Advanced Switch опции", ["Switch.Builder"] = "Custom Switch Builder", ["Switch.Enabled"] = "Включен", ["Switch.Disabled"] = "Изключен", ["Switch.Reverse"] = "Обърни позиции (2-State)", ["Switch.Examples"] = "Custom Switch примери", ["Switch.State"] = "ИМЕ НА ПОЗИЦИЯ", ["Switch.Conditions"] = "УСЛОВИЯ", ["Switch.Virtual"] = "ВИРТУАЛЕН", ["Switch.When"] = "КОГА ДА ДЕЙСТВА", ["Switch.Behavior"] = "ПОВЕДЕНИЕ", ["Switch.Learn"] = "Научи switch", ["Switch.Assign"] = "Запази", ["Switch.TryAgain"] = "Опитай пак", ["Switch.Add"] = "ДОБАВИ", ["Switch.Edit"] = "РЕДАКТИРАЙ", ["Switch.EnableDisable"] = "ВКЛ. / ИЗКЛ.", ["Switch.Delete"] = "ИЗТРИЙ", ["Switch.Test"] = "ТЕСТ", ["Switch.Close"] = "ЗАТВОРИ", ["Switch.Save"] = "ЗАПАЗИ",
         },
         ["es"] = Spanish(),
@@ -75,6 +79,7 @@ internal static partial class AppText
         ["tr"] = Quick("Ana Sayfa", "Profiller", "Secenekler", "OYUN MODU", "OYUNU BASLAT", "PROFILLER", "Dil", "SECENEKLERI KAYDET", "IPTAL"),
         ["el"] = Greek(),
         ["ro"] = Romanian(),
+        ["he"] = Quick("בית", "פרופילים", "אפשרויות", "מצב משחק", "הפעל את המשחק", "פרופילים", "שפה", "שמור", "ביטול"),
         ["zh-Hans"] = Quick("主页", "配置", "选项", "游戏模式", "启动游戏", "配置", "语言", "保存选项", "取消"),
     };
 
@@ -194,7 +199,7 @@ internal static partial class AppText
         text["Common.On"] = "Ενεργό";
         text["Common.Off"] = "Ανενεργό";
         text["Canvas.EditText"] = "Επεξεργασία κειμένου";
-        text["Tray.AppName"] = "WT VR Settings Assistant";
+        text["Tray.AppName"] = "War Thunder VR Assistant";
         text["Tray.Restore"] = "Επαναφορά";
         text["Tray.Exit"] = "Έξοδος";
         text["Tray.Balloon"] = "Η εφαρμογή συνεχίζει να εκτελείται στο system tray.";
@@ -203,12 +208,12 @@ internal static partial class AppText
         text["Game.Status.Checking"] = "Έλεγχος έκδοσης War Thunder...";
         text["Game.Status.SelectFolder"] = "Επίλεξε τον φάκελο War Thunder";
         text["Game.Status.Unavailable"] = "Η κατάσταση ενημέρωσης παιχνιδιού δεν είναι διαθέσιμη";
-        text["Game.Status.UnknownVersion"] = "{0}  |  Άγνωστη έκδοση παιχνιδιού";
-        text["Game.Status.UnknownUpdate"] = "{0}  |  Έκδοση παιχνιδιού {1}  |  Άγνωστη κατάσταση ενημέρωσης";
-        text["Game.Status.UpToDate"] = "{0}  |  Έκδοση παιχνιδιού {1}  |  Ενημερωμένο";
-        text["Game.Status.Required"] = "{0}  |  Έκδοση παιχνιδιού {1}  |  Απαιτείται {2}";
+        text["Game.Status.UnknownVersion"] = "{0}  |  Άγνωστη έκδοση";
+        text["Game.Status.UnknownUpdate"] = "{0}  |  Έκδοση {1}  |  Άγνωστη κατάσταση ενημέρωσης";
+        text["Game.Status.UpToDate"] = "{0}  |  Έκδοση {1}  |  Ενημερωμένο";
+        text["Game.Status.Required"] = "{0}  |  Έκδοση {1}  |  Απαιτείται {2}";
         text["Game.Status.CannotVerify"] = "{0}  |  Δεν μπορεί να επαληθευτεί η απαιτούμενη έκδοση";
-        text["Game.Status.Switching"] = "{0}  |  Έκδοση παιχνιδιού {1}  |  Αλλαγή σε {2}";
+        text["Game.Status.Switching"] = "{0}  |  Έκδοση {1}  |  Αλλαγή σε {2}";
         text["Game.AlreadyRunning"] = "Το War Thunder εκτελείται ήδη.";
         text["Game.SelectInstallFirst"] = "Επίλεξε πρώτα την εγκατάσταση War Thunder.";
         text["Game.LauncherRunning"] = "Ο επίσημος launcher εκτελείται ήδη. Κλείσ τον και πάτησε ξανά Εκκίνηση παιχνιδιού.";
@@ -399,7 +404,7 @@ internal static partial class AppText
         text["Keybind.Map"] = "Αλλαγή χάρτη στο πεδίο μάχης";
         text["Keybind.AdvancedDescription"] = "Δημιούργησε προσαρμοσμένες θέσεις διακόπτη και σύνδεσε κάθε θέση με πλήκτρο ή κουμπί ποντικιού.";
         text["Keybind.ManageSwitches"] = "ΔΙΑΧΕΙΡΙΣΗ ΠΡΟΣΑΡΜΟΣΜΕΝΩΝ ΔΙΑΚΟΠΤΩΝ";
-        text["Keybind.Notice"] = "Σημαντικό: κράτα το WT VR Settings Assistant ανοιχτό όταν χρησιμοποιείς αυτά τα bindings. Αν το War Thunder τρέχει ως διαχειριστής, τρέξε και την εφαρμογή ως διαχειριστής.";
+        text["Keybind.Notice"] = "Σημαντικό: κράτα το War Thunder VR Assistant ανοιχτό όταν χρησιμοποιείς αυτά τα bindings. Αν το War Thunder τρέχει ως διαχειριστής, τρέξε και την εφαρμογή ως διαχειριστής.";
         text["Keybind.EnabledStatus"] = "Ενεργό. Τα bindings πληκτρολογίου, ποντικιού και HOTAS είναι ενεργά.";
         text["Keybind.OffStatus"] = "Ο Βοηθός πλήκτρων είναι ανενεργός. Ενεργοποίησέ τον παραπάνω για να δουλέψουν τα inputs.";
         text["Keybind.AdvancedEnabled"] = "Οι προηγμένες συνδέσεις διακοπτών είναι ενεργές.";
@@ -647,7 +652,7 @@ internal static partial class AppText
         text["Common.On"] = "Pornit";
         text["Common.Off"] = "Oprit";
         text["Canvas.EditText"] = "Editează textul";
-        text["Tray.AppName"] = "WT VR Settings Assistant";
+        text["Tray.AppName"] = "War Thunder VR Assistant";
         text["Tray.Restore"] = "Restaurează";
         text["Tray.Exit"] = "Ieșire";
         text["Tray.Balloon"] = "Aplicația rulează în continuare în system tray.";
@@ -656,15 +661,15 @@ internal static partial class AppText
         text["Game.Status.Checking"] = "Se verifică versiunea War Thunder...";
         text["Game.Status.SelectFolder"] = "Selectează folderul War Thunder";
         text["Game.Status.Unavailable"] = "Starea actualizării jocului nu este disponibilă";
-        text["Game.Status.UnknownVersion"] = "{0}  |  Versiune joc necunoscută";
-        text["Game.Status.UnknownUpdate"] = "{0}  |  Versiune joc {1}  |  Stare actualizare necunoscută";
-        text["Game.Status.UpToDate"] = "{0}  |  Versiune joc {1}  |  La zi";
-        text["Game.Status.Required"] = "{0}  |  Versiune joc {1}  |  Necesită {2}";
+        text["Game.Status.UnknownVersion"] = "{0}  |  Versiune necunoscută";
+        text["Game.Status.UnknownUpdate"] = "{0}  |  Versiune {1}  |  Stare actualizare necunoscută";
+        text["Game.Status.UpToDate"] = "{0}  |  Versiune {1}  |  La zi";
+        text["Game.Status.Required"] = "{0}  |  Versiune {1}  |  Necesită {2}";
         text["Game.Status.CannotVerify"] = "{0}  |  Nu se poate verifica versiunea necesară";
-        text["Game.Status.Switching"] = "{0}  |  Versiune joc {1}  |  Se comută la {2}";
+        text["Game.Status.Switching"] = "{0}  |  Versiune {1}  |  Se comută la {2}";
         text["Game.AlreadyRunning"] = "War Thunder rulează deja.";
         text["Game.SelectInstallFirst"] = "Selectează mai întâi instalarea War Thunder.";
-        text["Game.LauncherRunning"] = "Launcherul oficial rulează deja. Închide-l și apasă din nou Launch Game.";
+        text["Game.LauncherRunning"] = "Launcherul oficial rulează deja. Închide-l și apasă din nou LAUNCH.";
         text["Game.LaunchTitle"] = "Pornire joc";
         text["Profiles.GameProfiles"] = "Profiluri joc";
         text["Profiles.AircraftType"] = "Tip aeronavă";
@@ -865,7 +870,7 @@ internal static partial class AppText
         text["Keybind.Map"] = "Schimbă harta pe câmpul de luptă";
         text["Keybind.AdvancedDescription"] = "Creează poziții custom pentru comutatoare și mapează fiecare poziție la o tastă sau un buton de mouse.";
         text["Keybind.ManageSwitches"] = "ADMINISTREAZĂ COMUTATOARE PERSONALIZATE";
-        text["Keybind.Notice"] = "Important: ține WT VR Settings Assistant pornit când folosești aceste legături. Dacă War Thunder rulează ca administrator, rulează și aplicația ca administrator.";
+        text["Keybind.Notice"] = "Important: ține War Thunder VR Assistant pornit când folosești aceste legături. Dacă War Thunder rulează ca administrator, rulează și aplicația ca administrator.";
         text["Keybind.EnabledStatus"] = "Activat. Bindingurile de tastatură, mouse și HOTAS sunt active.";
         text["Keybind.OffStatus"] = "Asistentul de taste este oprit. Activează-l mai sus pentru a folosi inputurile atribuite.";
         text["Keybind.AdvancedEnabled"] = "Legăturile avansate pentru comutatoare sunt activate.";
@@ -1048,7 +1053,7 @@ internal static partial class AppText
         ["Home.Discord"] = "DISCORD",
         ["Home.YouTube"] = "YOUTUBE",
         ["Home.Support"] = "Buy me a Beer!",
-        ["Home.Launch"] = "LAUNCH GAME", ["Home.LaunchAction"] = "LAUNCH", ["Home.UpdateAction"] = "UPDATE", ["Home.RunningAction"] = "RUNNING",
+        ["Home.Launch"] = "LAUNCH", ["Home.LaunchAction"] = "LAUNCH", ["Home.UpdateAction"] = "UPDATE", ["Home.RunningAction"] = "RUNNING",
         ["Home.LiveServer"] = "LIVE SERVER",
         ["Home.TestServer"] = "TEST SERVER",
         ["Home.VersionChecking"] = "version ...",
@@ -1107,7 +1112,7 @@ internal static partial class AppText
         ["Common.On"] = "On",
         ["Common.Off"] = "Off",
         ["Canvas.EditText"] = "Edit text",
-        ["Tray.AppName"] = "WT VR Settings Assistant",
+        ["Tray.AppName"] = "War Thunder VR Assistant",
         ["Tray.Restore"] = "Restore",
         ["Tray.Exit"] = "Exit",
         ["Tray.Balloon"] = "The app is still running in the system tray.",
@@ -1117,15 +1122,15 @@ internal static partial class AppText
         ["Game.Status.Checking"] = "Checking War Thunder version...",
         ["Game.Status.SelectFolder"] = "Select the War Thunder folder",
         ["Game.Status.Unavailable"] = "Game update status unavailable",
-        ["Game.Status.UnknownVersion"] = "{0}  |  Game version unknown",
-        ["Game.Status.UnknownUpdate"] = "{0}  |  Game Version {1}  |  Update status unknown",
+        ["Game.Status.UnknownVersion"] = "{0}  |  Game Version unknown",
+        ["Game.Status.UnknownUpdate"] = "{0}  |  Game Version {1}  |  Server version unknown",
         ["Game.Status.UpToDate"] = "{0}  |  Game Version {1}  |  Up to date",
-        ["Game.Status.Required"] = "{0}  |  Game Version {1}  |  Required {2}",
+        ["Game.Status.Required"] = "{0}  |  Game Version {1}  |  Server Version {2}",
         ["Game.Status.CannotVerify"] = "{0}  |  Cannot verify required branch version",
-        ["Game.Status.Switching"] = "{0}  |  Game Version {1}  |  Switching to {2}",
+        ["Game.Status.Switching"] = "{0}  |  Game Version {1}  |  Updating to {2}",
         ["Game.AlreadyRunning"] = "War Thunder is already running.",
         ["Game.SelectInstallFirst"] = "Select the War Thunder installation first.",
-        ["Game.LauncherRunning"] = "The official launcher is already running. Close it and press Launch Game again.",
+        ["Game.LauncherRunning"] = "The official launcher is already running. Close it and press LAUNCH again.",
         ["Game.LaunchTitle"] = "Game launch",
         ["Profiles.GameProfiles"] = "Game profiles",
         ["Profiles.AircraftType"] = "Aircraft type",
@@ -1209,12 +1214,14 @@ internal static partial class AppText
         ["Recommended.Back"] = "BACK",
         ["Recommended.Next"] = "NEXT",
         ["Recommended.MissingImage"] = "Missing image: {0}",
-        ["Info.Title"] = "WAR THUNDER VR SETTINGS ASSISTANT",
-        ["Info.Purpose"] = "A Windows utility for switching War Thunder between Desktop and VR profiles, managing controls, and extending comfortable rear visibility in VR.",
-        ["Info.HowTitle"] = "HOW TO USE",
-        ["Info.HowText"] = "1. Select the War Thunder folder. The app detects config.blk and the launcher.\n\n2. Capture Monitor/VR graphics and optional control profiles. Select MONITOR or VR to apply them.\n\n3. Enable Neck Assistant before starting VR. SteamVR OpenXR and VDXR are supported. Gold switches indicate enabled features.\n\n4. KeyBind Assistant can pulse hidden game commands from keyboard, mouse or HOTAS inputs.\n\n5. VTrim can install vJoy, route axes through Device 1, and hold pitch attitude using telemetry while the stick is centered.",
-        ["Info.ChangesTitle"] = "VERSION {0} HIGHLIGHTS",
-        ["Info.ChangesText"] = "- VTrim one-click vJoy setup and Device 1 configuration.\n\n- Telemetry-driven pitch attitude hold and pitch-rate damping without sending game trim keys.\n\n- KeyBind switch ON/OFF pulses for gear-style toggles.\n\n- Larger icon-only home cards and cleaner dark grey theme.\n\n- Updates preserve settings, graphics, controls, diagnostics and NeckAssist files.",
+        ["Info.Title"] = "WAR THUNDER VR ASSISTANT",
+        ["Info.Purpose"] = "Your control center for War Thunder VR: switch Monitor/VR setups, manage aircraft profiles, configure Neck Assistant and KeyBind Assistant, and use VTrim for HOTAS trim and axis shaping.",
+        ["Info.ProfileGuideTitle"] = "Aircraft profiles and vJoy setup",
+        ["Info.ProfileGuideText"] = "VTrim reads War Thunder's local telemetry at 127.0.0.1:8111 to identify the aircraft you are flying. After the aircraft is confirmed, the app creates its profile if needed and switches to it automatically. You can also add and tune a profile manually before flying that aircraft.\n\nDEFAULT uses the shared input, trim and axis settings from Trim Dashboard and Axis Curves. CUSTOM stores that aircraft's own trim, bindings and pitch, roll and yaw curves. This lets one War Thunder controls profile serve props, early jets and top-tier jets with different handling.\n\nTo use VTrim's output, bind War Thunder's pitch, roll and yaw axes to the corresponding vJoy axes. Set the game's axis response, curves and deadzones to their neutral/default values so VTrim's shaping is not applied twice. Configure your physical HOTAS and vJoy routing in Devices & Output.",
+        ["Info.HowTitle"] = "QUICK START",
+        ["Info.HowText"] = "1. Select your War Thunder folder once. The Assistant finds config.blk and the launcher automatically.\n\n2. Save your Monitor and VR graphics/control setups, then use MONITOR or VR on Home to switch between them.\n\n3. Configure Neck Assistant and KeyBind Assistant only if you need them; their Home switches show whether they are active.\n\n4. Open VTrim for HOTAS trim, aircraft-specific profiles and axis curves. Use Devices & Output to configure the physical axes and vJoy output.\n\n5. Aircraft Custom Profiles are selected automatically from War Thunder telemetry when available. Your per-aircraft trim, bindings and curves stay with that aircraft.",
+        ["Info.ChangesTitle"] = "PATCH NOTES  ·  v1.0 → v{0}",
+        ["Info.ChangesText"] = "v1.0  ·  CORE VR ASSISTANT\n• Monitor/VR graphics switching and War Thunder launcher integration.\n• Neck Assistant for extended rear visibility in VR.\n• Saved settings and basic profile management.\n\nv1.1  ·  KEYBINDS & QUALITY OF LIFE\n• KeyBind Assistant for hidden War Thunder commands using keyboard, mouse or HOTAS.\n• Persistent assistant states, tray/startup options and safer app updating.\n• Improved OpenXR/SteamVR/VDXR handling and UI scaling.\n\nv2.0  ·  VTRIM & AIRCRAFT PROFILES\n• Embedded VTrim with vJoy output, physical axis routing and virtual trim.\n• Automatic aircraft detection and aircraft-specific Custom Profiles.\n• Per-aircraft trim bindings, response curves, copy/paste tools and cached aircraft artwork.\n• Advanced two-state/three-state switch handling and virtual-button actions.\n• Live/Test server selection, version checking and safer launch/update state handling.\n\nv2.0.1  ·  CURRENT RELEASE\n• Reworked aircraft profile editor with full-page scrolling and stable composited rendering.\n• Click-to-edit Roll/Pitch/Rudder curves with custom points, Copy/Paste/Reset and live scalar synchronization.\n• Default Profile and Custom Profile workflow cleanup, improved Home/profile navigation and responsive layouts.\n• Flight Assistant is present but locked while official Gaijin legal clarification is pending.\n• Expanded language support, translated UI, Ukrainian/Hebrew support and improved long-text fitting.\n• Numerous launcher, update, profile-state, flicker and layout fixes.",
         ["Info.OpenSource"] = "Free and open source community software. This unofficial tool is not affiliated with, endorsed by, or sponsored by Gaijin Entertainment.",
         ["Assistant.EnableKeybind"] = "Enable KeyBind Assistant",
         ["Assistant.AdvancedSwitch"] = "Advanced Switch Bindings",
@@ -1328,7 +1335,7 @@ internal static partial class AppText
         ["Keybind.Map"] = "Switch map to battlefield",
         ["Keybind.AdvancedDescription"] = "Create custom switch positions and map each position to a keyboard key or mouse button.",
         ["Keybind.ManageSwitches"] = "MANAGE CUSTOM SWITCHES",
-        ["Keybind.Notice"] = "Important: keep WT VR Settings Assistant running while using these bindings. If War Thunder runs as administrator, run this app as administrator too so the keyboard commands can reach the game.",
+        ["Keybind.Notice"] = "Important: keep War Thunder VR Assistant running while using these bindings. If War Thunder runs as administrator, run this app as administrator too so the keyboard commands can reach the game.",
         ["Keybind.EnabledStatus"] = "Enabled. Keyboard, mouse, and HOTAS bindings are active.",
         ["Keybind.OffStatus"] = "KeyBind Assistant is off. Enable it above to activate assigned inputs.",
         ["Keybind.AdvancedEnabled"] = "Advanced Switch Bindings enabled.",
@@ -1479,7 +1486,6 @@ internal static partial class AppText
         ["Switch.Type.Custom"] = "Custom / Multi-State",
     };
 }
-
 
 
 

@@ -30,7 +30,7 @@ internal static class WarThunderServerConfig
         if (!TryFindBlock(text, "yunetwork", out int start, out int length))
             return GameServerChannel.Live;
 
-        string block = text.Substring(start, length);
+        string block = MaskComments(text.Substring(start, length), maskStrings: false);
         return System.Text.RegularExpressions.Regex.IsMatch(
             block,
             @"curCircuit\s*:\s*t\s*=\s*""dev""",
@@ -80,55 +80,82 @@ internal static class WarThunderServerConfig
     internal static bool TryFindBlock(string text, string name, out int start, out int length)
     {
         start = length = 0;
-        int search = 0;
-        while (search < text.Length)
+        string code = MaskComments(text, maskStrings: true);
+        int depth = 0;
+        for (int i = 0; i < code.Length; i++)
         {
-            int nameIndex = text.IndexOf(name, search, StringComparison.OrdinalIgnoreCase);
-            if (nameIndex < 0) return false;
-
-            bool leftBoundary = nameIndex == 0 || !(char.IsLetterOrDigit(text[nameIndex - 1]) || text[nameIndex - 1] == '_');
-            int afterName = nameIndex + name.Length;
-            bool rightBoundary = afterName >= text.Length || !(char.IsLetterOrDigit(text[afterName]) || text[afterName] == '_');
-            if (!leftBoundary || !rightBoundary)
+            char c = code[i];
+            if (c == '{') { depth++; continue; }
+            if (c == '}') { depth--; continue; }
+            if (depth != 0 || !(char.IsLetter(c) || c == '_')) continue;
+            int wordStart = i;
+            while (i < code.Length && (char.IsLetterOrDigit(code[i]) || code[i] == '_')) i++;
+            if (!code.AsSpan(wordStart, i - wordStart).Equals(name.AsSpan(), StringComparison.OrdinalIgnoreCase))
             {
-                search = afterName;
+                i--;
                 continue;
             }
-
-            int brace = afterName;
-            while (brace < text.Length && char.IsWhiteSpace(text[brace])) brace++;
-            if (brace >= text.Length || text[brace] != '{')
+            while (i < code.Length && char.IsWhiteSpace(code[i])) i++;
+            if (i >= code.Length || code[i] != '{') { i--; continue; }
+            int blockDepth = 1;
+            for (int end = i + 1; end < code.Length; end++)
             {
-                search = afterName;
-                continue;
-            }
-
-            int depth = 0;
-            bool inString = false;
-            bool escaped = false;
-            for (int i = brace; i < text.Length; i++)
-            {
-                char c = text[i];
-                if (inString)
+                if (code[end] == '{') blockDepth++;
+                else if (code[end] == '}' && --blockDepth == 0)
                 {
-                    if (escaped) escaped = false;
-                    else if (c == '\\') escaped = true;
-                    else if (c == '"') inString = false;
-                    continue;
-                }
-
-                if (c == '"') { inString = true; continue; }
-                if (c == '{') depth++;
-                else if (c == '}' && --depth == 0)
-                {
-                    start = nameIndex;
-                    length = i - nameIndex + 1;
+                    start = wordStart;
+                    length = end - wordStart + 1;
                     return true;
                 }
             }
-            return false;
+            throw new InvalidDataException("The yunetwork block is incomplete; config.blk was not changed.");
         }
         return false;
+    }
+
+    // Keep offsets stable while excluding comments and (for block discovery)
+    // quoted values. Braces or circuit examples in comments are not settings.
+    private static string MaskComments(string text, bool maskStrings)
+    {
+        char[] result = text.ToCharArray();
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (text[i] == '"')
+            {
+                if (maskStrings) result[i] = ' ';
+                for (i++; i < text.Length; i++)
+                {
+                    char c = text[i];
+                    if (maskStrings) result[i] = ' ';
+                    if (c == '\\' && i + 1 < text.Length)
+                    {
+                        i++;
+                        if (maskStrings) result[i] = ' ';
+                    }
+                    else if (c == '"') break;
+                }
+            }
+            else if (text[i] == '/' && i + 1 < text.Length && text[i + 1] == '/')
+            {
+                while (i < text.Length && text[i] != '\n') result[i++] = ' ';
+            }
+            else if (text[i] == '/' && i + 1 < text.Length && text[i + 1] == '*')
+            {
+                result[i++] = ' ';
+                result[i] = ' ';
+                while (++i < text.Length)
+                {
+                    if (text[i] == '*' && i + 1 < text.Length && text[i + 1] == '/')
+                    {
+                        result[i] = result[i + 1] = ' ';
+                        i++;
+                        break;
+                    }
+                    if (text[i] != '\r' && text[i] != '\n') result[i] = ' ';
+                }
+            }
+        }
+        return new string(result);
     }
 
     private static string DetectNewline(string text) => text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";

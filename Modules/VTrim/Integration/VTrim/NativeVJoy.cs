@@ -8,6 +8,7 @@ internal enum Axis : uint { HID_USAGE_X = 0x30, HID_USAGE_Y = 0x31, HID_USAGE_RZ
 // mixing the old NuGet wrapper's native DLL with a newer installed driver.
 internal sealed class VirtualJoystick : IDisposable
 {
+    static VirtualJoystick() => VJoyNativeResolver.Ensure();
     private readonly uint _id;
     private bool _owned;
     public VirtualJoystick(uint id) => _id = id;

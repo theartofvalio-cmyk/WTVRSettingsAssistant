@@ -24,7 +24,7 @@ internal static class IllustratedTheme
         if (image.Tag is not AssetLabel label) return false;
         DrawFrame(graphics, Rectangle.Inflate(bounds,-3,-3),label.Active);
         bool mode = label.Text is "MONITOR" or "VR";
-        bool launch = label.Text == "LAUNCH GAME";
+        bool launch = label.Text == "LAUNCH";
         if (mode && label.Active)
         {
             using Brush tint = new SolidBrush(Color.FromArgb(58, Gold));
@@ -52,11 +52,13 @@ internal static class IllustratedTheme
         // untouched for update safety, but do not allow it to revive the retired UI.
         return true;
     }
-    public static readonly Color Background = Color.FromArgb(29, 31, 33);
-    public static readonly Color Panel = Color.FromArgb(36, 38, 40);
-    public static readonly Color Ivory = Color.FromArgb(235, 238, 240);
-    public static readonly Color Gold = Color.FromArgb(226, 180, 85);
-    public static readonly Color Muted = Color.FromArgb(168, 168, 172);
+    private static bool IsMigTheme => AppThemeAssets.ActiveTheme.Equals("MiG29", StringComparison.OrdinalIgnoreCase);
+    public static Color Background => IsMigTheme ? Color.FromArgb(24, 24, 24) : Color.FromArgb(29, 31, 33);
+    public static Color Panel => IsMigTheme ? Color.FromArgb(31, 31, 31) : Color.FromArgb(36, 38, 40);
+    public static Color Ivory => IsMigTheme ? Color.FromArgb(239, 226, 196) : Color.FromArgb(235, 238, 240);
+    public static Color Gold => IsMigTheme ? Color.FromArgb(196, 54, 46) : Color.FromArgb(226, 180, 85);
+    public static Color Muted => IsMigTheme ? Color.FromArgb(154, 148, 139) : Color.FromArgb(168, 168, 172);
+    public static Color SelectedRow => IsMigTheme ? Color.FromArgb(88, 43, 39) : Color.FromArgb(91, 74, 42);
     public static void DrawSwitch(Graphics g, Rectangle bounds, bool selected)
     {
         using GraphicsPath shape = new();
@@ -75,8 +77,7 @@ internal static class IllustratedTheme
     private static Image Illustration(string name)
     {
         if (Illustrations.TryGetValue(name,out var image)) return image;
-        using var stream = typeof(IllustratedTheme).Assembly.GetManifestResourceStream($"WTVRSettingsAssistant.Assets.Illustrated{name}.png")!;
-        using var source = Image.FromStream(stream);
+        using Image source = AssetManager.LoadImage($"Illustrated{name}.png");
         return Illustrations[name] = new Bitmap(source);
     }
 
@@ -86,17 +87,14 @@ internal static class IllustratedTheme
         string key = Path.GetFileNameWithoutExtension(name).ToLowerInvariant();
         if (key == "mainscreenlogo")
         {
-            using var stream = typeof(IllustratedTheme).Assembly.GetManifestResourceStream("WTVRSettingsAssistant.Assets.VRA.png");
-            if (stream == null) throw new InvalidOperationException("Transparent VRA logo resource is missing.");
-            using var source = Image.FromStream(stream);
-            return new Bitmap(source);
+            return BrandingLogo.Create();
         }
         // Instructional screenshots and third-party logos remain unchanged.
         string? label = key switch
         {
             "monitor_red" or "monitor_orange" or "monitor_green" => "MONITOR",
             "vr_red" or "vr_orange" or "vr_green" => "VR",
-            "play_on" or "play_off" => "LAUNCH GAME",
+            "play_on" or "play_off" => "LAUNCH",
             "browse_red" or "browse_green" => "BROWSE",
             "capturesettings" or "capturesettingsgray" => "CAPTURE SETTINGS",
             "remove" or "removegray" => "REMOVE",
@@ -332,13 +330,33 @@ internal static class IllustratedTheme
         return bitmap;
     }
 
+    private static Image LoadThemeImageDirect(string fileName)
+    {
+        var assembly = typeof(IllustratedTheme).Assembly;
+        string? resourceName = AppThemeAssets.ResolveResourceName(assembly, fileName);
+        if (resourceName is null)
+            throw new FileNotFoundException($"Theme image resource not found: {fileName}");
+
+        using Stream? stream = assembly.GetManifestResourceStream(resourceName);
+        if (stream is null)
+            throw new FileNotFoundException($"Theme image stream not found: {fileName}");
+
+        using Image source = Image.FromStream(stream);
+        return new Bitmap(source);
+    }
+
     private static Image? OptionalImage(string fileName)
     {
         if (OptionalImages.TryGetValue(fileName, out Image? cached)) return cached;
-        using Stream? stream = typeof(IllustratedTheme).Assembly.GetManifestResourceStream($"WTVRSettingsAssistant.Assets.{fileName}");
-        if (stream == null) return OptionalImages[fileName] = null;
-        using Image source = Image.FromStream(stream);
-        return OptionalImages[fileName] = new Bitmap(source);
+        try
+        {
+            using Image source = LoadThemeImageDirect(fileName);
+            return OptionalImages[fileName] = new Bitmap(source);
+        }
+        catch (FileNotFoundException)
+        {
+            return OptionalImages[fileName] = null;
+        }
     }
 
     private static Rectangle FitImage(Size imageSize, Rectangle bounds)
@@ -420,16 +438,26 @@ internal sealed class IllustratedNavButton : Button
         int iconSize = Math.Min((int)Math.Round(56 * contentScale), Height - inset * 2);
         int textLeft = inset + iconSize + Math.Max(10, (int)Math.Round(12 * contentScale));
         IllustratedTheme.DrawIcon(e.Graphics, _icon, new Rectangle(inset,(Height-iconSize)/2,iconSize,iconSize), FeatureActive || Selected ? IllustratedTheme.Gold : ForeColor);
-        Rectangle textBounds = new(textLeft, 0, Math.Max(1, Width - textLeft - inset), Height);
+        Rectangle textBounds = new(textLeft, 2, Math.Max(1, Width - textLeft - inset), Math.Max(1, Height - 4));
         float drawSize = Font.Size;
-        while (drawSize > 11F)
+        bool singleLine = false;
+        while (drawSize > 10F)
         {
             using Font test = new(Font.FontFamily, drawSize, Font.Style, Font.Unit);
-            if (TextRenderer.MeasureText(e.Graphics, Text, test, Size.Empty, TextFormatFlags.NoPadding).Width <= textBounds.Width) break;
+            Size oneLine = TextRenderer.MeasureText(e.Graphics, Text, test, Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
+            if (oneLine.Width <= textBounds.Width && oneLine.Height <= textBounds.Height)
+            {
+                singleLine = true;
+                break;
+            }
+            Size wrapped = TextRenderer.MeasureText(e.Graphics, Text, test, textBounds.Size, TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
+            if (wrapped.Width <= textBounds.Width && wrapped.Height <= textBounds.Height) break;
             drawSize -= 0.5F;
         }
-        using Font drawFont = new(Font.FontFamily, drawSize, Font.Style, Font.Unit);
-        TextRenderer.DrawText(e.Graphics, Text, drawFont, textBounds, ForeColor, TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.SingleLine);
+        using Font drawFont = new(Font.FontFamily, Math.Max(10F, drawSize), Font.Style, Font.Unit);
+        TextFormatFlags flags = TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.NoPrefix;
+        flags |= singleLine ? TextFormatFlags.SingleLine : TextFormatFlags.WordBreak;
+        TextRenderer.DrawText(e.Graphics, Text, drawFont, textBounds, ForeColor, flags);
         if (Focused) ControlPaint.DrawFocusRectangle(e.Graphics,new Rectangle(4,4,Width-9,Height-9));
     }
 }
@@ -478,69 +506,97 @@ internal class ThemeButton : Button
 
 internal sealed class AssistantInfoPage : UserControl
 {
-    private readonly Label _title, _purpose, _legal;
-    private readonly Panel[] _cards;
-    private readonly Label[] _headings, _bodies;
+    private readonly Label _title, _purpose, _legal, _heading, _body, _profileHeading, _profileBody;
+    private readonly Panel _card, _profileCard;
     private readonly string _version;
+    private bool _arranging;
+
     public AssistantInfoPage(string version)
     {
         _version = version;
-        Dock=DockStyle.Fill; BackColor=IllustratedTheme.Background; AutoScroll=true;
-        Label LabelFor(string text,int size,bool bold=false) => new() { Text=text,ForeColor=IllustratedTheme.Ivory,BackColor=BackColor,Font=new Font("Segoe UI",size,bold?FontStyle.Bold:FontStyle.Regular,GraphicsUnit.Pixel),AutoSize=false };
-        _title=LabelFor("VR ASSISTANT",38,true);
-        _purpose=LabelFor("Switch War Thunder between Monitor and VR profiles, configure Neck Assistant, and map hidden commands with KeyBind Assistant. Supports SteamVR, OpenXR and VDXR automatically.",23);
-        _legal=LabelFor("Free and open source community software. This unofficial tool is not affiliated with, endorsed by, or sponsored by Gaijin Entertainment.",20);
-        _cards=[new Panel(),new Panel()];
-        _headings=[LabelFor("HOW TO USE",30,true),LabelFor($"VERSION {version} HIGHLIGHTS",30,true)];
-        _bodies=[LabelFor("1. Select the War Thunder folder. The app detects config.blk and the launcher.\n\n2. Capture Monitor/VR graphics and optional control profiles. Select MONITOR or VR to apply them.\n\n3. Enable Neck Assistant before starting VR. Gold switches indicate enabled features.\n\n4. Advanced offers curves with Toggle or Hold. Simple adds rear rotation while you hold its input.\n\n5. Assign keyboard, mouse or HOTAS inputs. Simple uses the game's recenter; its deadzone chooses the viewing direction.",21),
-            LabelFor("• KeyBind Assistant maps keyboard, mouse and HOTAS inputs to hidden game commands.\n\n• VR head Up/Down and battlefield map shortcuts.\n\n• Live/Test Server switch updates the War Thunder network circuit safely.\n\n• Persistent assistant enable states.\n\n• Corrected input injection and privilege errors.\n\n• Reopening restores one existing app instance.\n\n• Updates preserve settings and profiles.",23)];
-        _bodies[0].Font = new Font("Segoe UI", 23, FontStyle.Regular, GraphicsUnit.Pixel);
-        Controls.AddRange([_title,_purpose,_legal]);
-        for(int i=0;i<2;i++)
+        Dock = DockStyle.Fill;
+        BackColor = IllustratedTheme.Background;
+        AutoScroll = true;
+
+        Label LabelFor(string text, int size, bool bold = false) => new()
         {
-            Panel card=_cards[i]; card.BackColor=IllustratedTheme.Panel;
-            _headings[i].BackColor=_bodies[i].BackColor=card.BackColor;
-            card.Controls.AddRange([_headings[i],_bodies[i]]);
-            card.Paint+=(_,e)=>IllustratedTheme.DrawFrame(e.Graphics,new Rectangle(2,2,card.Width-5,card.Height-5),false);
-            Controls.Add(card);
-        }
-        SizeChanged+=(_,_)=>Arrange(); Arrange();
+            Text = text,
+            ForeColor = IllustratedTheme.Ivory,
+            BackColor = BackColor,
+            Font = new Font("Segoe UI", size, bold ? FontStyle.Bold : FontStyle.Regular, GraphicsUnit.Pixel),
+            AutoSize = false,
+            UseMnemonic = false
+        };
+
+        _title = LabelFor("WAR THUNDER VR ASSISTANT", 38, true);
+        _purpose = LabelFor("Your control center for War Thunder VR.", 23);
+        _legal = LabelFor("Free and open source community software.", 20);
+        _heading = LabelFor($"Version {version} Patch Notes", 30, true);
+        _body = LabelFor(ReleaseNotes.Features, 22);
+        _profileHeading = LabelFor("Aircraft profiles and vJoy setup", 30, true);
+        _profileBody = LabelFor(string.Empty, 19);
+
+        _card = new Panel { BackColor = IllustratedTheme.Panel };
+        _heading.BackColor = _body.BackColor = _card.BackColor;
+        _card.Controls.AddRange([_heading, _body]);
+        _card.Paint += (_, e) => IllustratedTheme.DrawFrame(e.Graphics, new Rectangle(2, 2, _card.Width - 5, _card.Height - 5), false);
+
+        _profileCard = new Panel { BackColor = IllustratedTheme.Panel };
+        _profileHeading.BackColor = _profileBody.BackColor = _profileCard.BackColor;
+        _profileCard.Controls.AddRange([_profileHeading, _profileBody]);
+        _profileCard.Paint += (_, e) => IllustratedTheme.DrawFrame(e.Graphics, new Rectangle(2, 2, _profileCard.Width - 5, _profileCard.Height - 5), false);
+
+        Controls.AddRange([_title, _purpose, _card, _profileCard, _legal]);
+        _title.Visible = _purpose.Visible = false;
+        SizeChanged += (_, _) => Arrange();
+        Arrange();
     }
 
     public void SetLanguage(string languageCode)
     {
-        _title.Text = AppText.T(languageCode, "Info.Title");
+        _title.Text = $"{AppText.T(languageCode, "Info.Title")}  ·  v{_version}";
         _purpose.Text = AppText.T(languageCode, "Info.Purpose");
+        _heading.Text = string.Format(CultureInfo.CurrentCulture, AppText.T(languageCode, "Info.ChangesTitle"), _version);
+        _body.Text = AppText.T(languageCode, "Info.ChangesText");
+        _profileHeading.Text = AppText.T(languageCode, "Info.ProfileGuideTitle");
+        _profileBody.Text = AppText.T(languageCode, "Info.ProfileGuideText");
         _legal.Text = AppText.T(languageCode, "Info.OpenSource");
-        _headings[0].Text = AppText.T(languageCode, "Info.HowTitle");
-        _headings[1].Text = string.Format(CultureInfo.CurrentCulture, AppText.T(languageCode, "Info.ChangesTitle"), _version);
-        _bodies[0].Text = AppText.T(languageCode, "Info.HowText");
-        _bodies[1].Text = AppText.T(languageCode, "Info.ChangesText");
         Arrange();
         Invalidate();
     }
+
     private void Arrange()
     {
-        int width=Math.Max(440,ClientSize.Width-72);
-        int Fit(Label label,int x,int y,int w)
+        if (_arranging) return;
+        _arranging = true;
+        try
         {
-            int h=TextRenderer.MeasureText(label.Text,label.Font,new Size(w,10000),TextFormatFlags.WordBreak|TextFormatFlags.TextBoxControl).Height+10;
-            label.SetBounds(x,y,w,h); return h;
+            int width = Math.Max(160, ClientSize.Width - 48);
+            Point scroll = AutoScrollPosition;
+            int Fit(Label label, int x, int y, int w)
+            {
+                int h = TextRenderer.MeasureText(label.Text, label.Font, new Size(w, 10000), TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl).Height + 10;
+                label.SetBounds(x, y, w, h);
+                return h;
+            }
+
+            int top = 20;
+
+            int headingHeight = Fit(_heading, 22, 18, width - 44);
+            int bodyHeight = Fit(_body, 22, 30 + headingHeight, width - 44);
+            int cardHeight = headingHeight + bodyHeight + 58;
+            _card.SetBounds(20 + scroll.X, top + scroll.Y, width, cardHeight);
+
+            int bottom = top + cardHeight + 24;
+            int profileHeadingHeight = Fit(_profileHeading, 22, 18, width - 44);
+            int profileBodyHeight = Fit(_profileBody, 22, 30 + profileHeadingHeight, width - 44);
+            int profileCardHeight = profileHeadingHeight + profileBodyHeight + 58;
+            _profileCard.SetBounds(20 + scroll.X, bottom + scroll.Y, width, profileCardHeight);
+            bottom += profileCardHeight + 24;
+            bottom += Fit(_legal, 20 + scroll.X, bottom + scroll.Y, width) + 42;
+            AutoScrollMinSize = new Size(0, bottom);
         }
-        int top=20+Fit(_title,20,20,width)+18;
-        top+=Fit(_purpose,20,top,width)+24;
-        bool columns=width>=920; int cardWidth=columns?(width-20)/2:width;
-        int bottom=top;
-        for(int i=0;i<2;i++)
-        {
-            int headingHeight=Fit(_headings[i],20,18,cardWidth-40);
-            int h=Fit(_bodies[i],20,28+headingHeight,cardWidth-40)+headingHeight+48;
-            int y=columns?top:bottom;
-            _cards[i].SetBounds(20+(columns?i*(cardWidth+20):0),y,cardWidth,h);
-            bottom=Math.Max(bottom,y+h+20);
-        }
-        bottom+=Fit(_legal,20,bottom,width)+42;
-        AutoScrollMinSize=new Size(0,bottom);
+        finally { _arranging = false; }
     }
 }
 

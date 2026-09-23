@@ -145,10 +145,16 @@ internal sealed class NeckAssistForm : Form
     private bool _lastRecenterPressed;
     private bool _toggleActive;
     private bool _runtimeAssistanceActive;
+    // A held HOTAS button must survive a transient DirectInput miss. Require a
+    // short, continuous release before Simple mode actually lets go.
+    private const int SimpleHoldReleaseDebounceMilliseconds = 90;
+    private bool _simpleHoldLatched;
+    private long _simpleHoldReleaseCandidateAt;
     private int _statusTicks;
     private bool _capturingBinding;
     private readonly Dictionary<Control, float> _themeBaseFontSizes = new();
     private bool _applyingThemeFontScale;
+    private Action? _relayoutIllustratedUi;
     private string _languageCode = "en";
     private static readonly IReadOnlyDictionary<string, string> LocalizedTextKeys = new Dictionary<string, string>
     {
@@ -678,7 +684,7 @@ internal sealed class NeckAssistForm : Form
         Button clearSimple = MakeButton("CLEAR");
         ThemeCheckBox advancedBehavior = new() { Appearance = Appearance.Button, AutoSize = false, Checked = _settings.AdvancedActivationBehavior == "Hold", Text = _settings.AdvancedActivationBehavior == "Hold" ? T("Assistant.Hold") : T("Assistant.Toggle"), ForeColor = Color.White, BackColor = ThemePalette.FromArgb(35, 55, 60), TextAlign = ContentAlignment.MiddleCenter };
         _simpleActivationBind.Click += (_, _) => CaptureBinding(2);
-        clearSimple.Click += (_, _) => { _settings.SimpleActivationBinding = "Not assigned"; _simpleActivationBind.Text = FormatBinding("Not assigned"); _lastActivationPressed = false; _runtimeAssistanceActive = false; _capturingBinding = false; SaveSettings(); };
+        clearSimple.Click += (_, _) => { _settings.SimpleActivationBinding = "Not assigned"; _simpleActivationBind.Text = FormatBinding("Not assigned"); _lastActivationPressed = false; _runtimeAssistanceActive = false; ResetSimpleHoldState(); _capturingBinding = false; SaveSettings(); };
         advancedBehavior.CheckedChanged += (_, _) => { _settings.AdvancedActivationBehavior = advancedBehavior.Checked ? "Hold" : "Toggle"; advancedBehavior.Text = advancedBehavior.Checked ? T("Assistant.Hold") : T("Assistant.Toggle"); advancedBehavior.BackColor = advancedBehavior.Checked ? ThemePalette.FromArgb(25, 95, 55) : ThemePalette.FromArgb(35, 55, 60); _toggleActive = false; SaveSettings(); };
         bindings.Controls.AddRange(new Control[] { simpleLabel, _simpleActivationBind, clearSimple, advancedBehavior });
         Button recenterNow = MakeButton("Recenter Neck Assistant");
@@ -814,7 +820,7 @@ internal sealed class NeckAssistForm : Form
             dashboard.RowStyles[1].SizeType = SizeType.Absolute;
             dashboard.RowStyles[1].Height = press ? 220 : 220;
             dashboard.RowStyles[2].SizeType = SizeType.Absolute;
-            dashboard.RowStyles[2].Height = press ? 260 : 290;
+            dashboard.RowStyles[2].Height = press ? 320 : 360;
             _curvePreview.Visible = _pitchPreview.Visible = graphHelp.Visible = pitchEnabled.Visible = linkAxes.Visible = naturalRear.Visible = !press;
             compactSliders.Visible = !press; pressControls.Visible = press; pressOverview.Visible = press;
             restoreAdvancedDefaults.Visible = !press;
@@ -848,7 +854,15 @@ internal sealed class NeckAssistForm : Form
             normalMode.BackColor = !press ? ThemePalette.FromArgb(25, 95, 55) : ThemePalette.FromArgb(35, 55, 60);
             pressMode.BackColor = press ? ThemePalette.FromArgb(25, 95, 55) : ThemePalette.FromArgb(35, 55, 60);
             _toggleActive = _settings.Enabled; _runtimeAssistanceActive = press ? false : _toggleActive;
+            ResetSimpleHoldState();
             SaveSettings();
+            // Movement-mode changes used to restore the old 260/290px binding
+            // row after the responsive layout had already expanded it, which
+            // reintroduced the clipped Camera Transition help text. Re-run the
+            // illustrated layout after the mode switch so the measured help
+            // text always owns enough vertical space in every language.
+            if (IllustratedTheme.Enabled && _relayoutIllustratedUi is not null && IsHandleCreated)
+                BeginInvoke(_relayoutIllustratedUi);
         }
         normalMode.CheckedChanged += (_, _) => { if (normalMode.Checked) ApplyMovementModeUi(); };
         pressMode.CheckedChanged += (_, _) => { if (pressMode.Checked) ApplyMovementModeUi(); };
@@ -977,8 +991,7 @@ internal sealed class NeckAssistForm : Form
                     int toolbarExtra = width < 960 ? 46 : 0;
                     int overviewHeight = simple ? 200 : 506 + toolbarExtra;
                     int middleHeight = simple ? 220 : 304;
-                    bool stackBindings = width < 1080;
-                    int bindingHeight = simple ? 260 : 290;
+                    int bindingHeight = simple ? 320 : 360;
                     const float uiScale = 1f;
                     dashboard.RowStyles[0].SizeType = SizeType.Absolute; dashboard.RowStyles[0].Height = overviewHeight;
                     dashboard.RowStyles[1].SizeType = SizeType.Absolute; dashboard.RowStyles[1].Height = middleHeight;
@@ -1031,40 +1044,57 @@ internal sealed class NeckAssistForm : Form
                     toggleLabel.SetBounds(12,50,175,36); _activationBind.SetBounds(195,50,225,38); clearToggle.SetBounds(430,50,90,38); advancedBehavior.SetBounds(530,50,125,38);
                     simpleLabel.SetBounds(12,2,270,48); _simpleActivationBind.SetBounds(292,4,225,38); clearSimple.SetBounds(527,4,90,38);
                     bindingHelp.SetBounds(12,simple ? 48 : 92,width-28,48);
-                    int recenterY = simple ? 204 : 242;
                     int recenterWidth = Math.Min(300, (width - 136) / 2);
-                    recenterNow.SetBounds(12, recenterY, recenterWidth, 38);
-                    _recenterBind.SetBounds(recenterNow.Right + 10, recenterY, Math.Max(100, width - recenterNow.Right - 122), 38);
-                    clearRecenter.SetBounds(width - 102, recenterY, 90, 38);
                     if (simple)
                     {
                         speedLabel.SetBounds(12,88,245,54);
                         speedValue.SetBounds(width-70,88,58,30);
                         transitionSpeed.SetBounds(265,88,Math.Max(220,width-355),34);
-                        speedHelp.SetBounds(12,148,width-28,46);
-                    }
-                    else if (stackBindings)
-                    {
-                        speedLabel.SetBounds(12,144,245,30);
-                        speedValue.SetBounds(width-70,144,58,30);
-                        transitionSpeed.SetBounds(265,144,Math.Max(100,width-355),34);
-                        speedHelp.SetBounds(12,184,width-28,48);
+                        speedHelp.SetBounds(12,148,width-28,56);
                     }
                     else
                     {
-                        int rightX=Math.Max(660,width/2);
-                        speedLabel.SetBounds(rightX,4,255,30);
-                        speedValue.SetBounds(width-70,4,58,30);
-                        transitionSpeed.SetBounds(rightX,38,Math.Max(190,width-rightX-12),34);
-                        speedHelp.SetBounds(rightX,80,Math.Max(190,width-rightX-12),48);
+                        // Advanced mode used to squeeze Camera Transition into the
+                        // right half of the row. At 1080p that clipped the help text
+                        // against the viewport edge. Give this section a dedicated
+                        // full-width row instead so every language has room to wrap.
+                        speedLabel.SetBounds(12,148,Math.Max(220,width-100),30);
+                        speedValue.SetBounds(width-70,148,58,30);
+                        transitionSpeed.SetBounds(12,184,Math.Max(220,width-24),34);
+                        speedHelp.SetBounds(12,224,Math.Max(220,width-28),64);
                     }
 
                     ApplyThemeScaleFonts(this, uiScale, title, speedHelp, bindingHelp, graphHelp, pressDescription, runtimeSupport);
+                    // Size explanatory text after applying fonts. Include the
+                    // table's padding/margins and the fixed header in the scroll
+                    // extent; otherwise the final lines are outside the viewport.
+                    foreach (Label helpLabel in new[] { speedHelp, bindingHelp })
+                    {
+                        helpLabel.AutoSize = false;
+                        int preferredHeight = TextRenderer.MeasureText(helpLabel.Text, helpLabel.Font,
+                            new Size(Math.Max(1, helpLabel.Width), int.MaxValue),
+                            TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix).Height + 12;
+                        helpLabel.Height = Math.Max(helpLabel.Height, preferredHeight);
+                    }
+                    // Position the recenter row after the *measured* help text.
+                    // This prevents translated/help text from being covered or cut.
+                    int recenterY = Math.Max(simple ? 216 : 304, speedHelp.Bottom + 12);
+                    recenterNow.SetBounds(12, recenterY, recenterWidth, 38);
+                    _recenterBind.SetBounds(recenterNow.Right + 10, recenterY, Math.Max(100, width - recenterNow.Right - 122), 38);
+                    clearRecenter.SetBounds(width - 102, recenterY, 90, 38);
+                    int controlsBottom = bindings.Controls.Cast<Control>()
+                        .Where(c => c.Visible).Select(c => c.Bottom).DefaultIfEmpty(0).Max();
+                    bindingHeight = Math.Max(bindingHeight, controlsBottom + bindings.Margin.Vertical + 28);
+                    bindings.MinimumSize = new Size(0, bindingHeight);
+                    dashboard.RowStyles[2].Height = bindingHeight;
+                    dashboard.Height = overviewHeight + middleHeight + bindingHeight + dashboard.Padding.Vertical;
+                    AutoScrollMinSize = new Size(0, header.Height + dashboard.Height + 24);
                     ResponsiveFonts.Set(_curvePreview, 17f, FontStyle.Regular, GraphicsUnit.Pixel);
                     ResponsiveFonts.Set(_pitchPreview, 17f, FontStyle.Regular, GraphicsUnit.Pixel);
                 }
                 finally { arrangingTheme = false; }
             }
+            _relayoutIllustratedUi = ArrangeTheme;
             void ApplyThemeScaleFonts(Control parent, float scale, params Control[] keyControls)
             {
                 foreach(Control child in parent.Controls)
@@ -1110,8 +1140,8 @@ internal sealed class NeckAssistForm : Form
             // Keep the dashboard directly in the content viewport. Camera transition
             // controls remain inside the Bindings row, immediately below Simple Hold.
             AutoScroll = true;
-            AutoScrollMinSize = new Size(0, dashboard.Bottom + 18);
             dashboard.Top = header.Height;
+            AutoScrollMinSize = new Size(0, header.Height + dashboard.Height + 24);
         }
 
         _statusTimer.Interval = 16;
@@ -1163,6 +1193,7 @@ internal sealed class NeckAssistForm : Form
             _pitchPreview.Invalidate();
         }
         Text = T("Nav.Neck");
+        _relayoutIllustratedUi?.Invoke();
         RefreshStatus();
     }
 
@@ -1284,6 +1315,7 @@ internal sealed class NeckAssistForm : Form
         {
             _settings.SimpleActivationBinding = dialog.Binding;
             _simpleActivationBind.Text = FormatBinding(dialog.Binding);
+            ResetSimpleHoldState();
         }
         SaveSettings();
     }
@@ -1437,12 +1469,22 @@ internal sealed class NeckAssistForm : Form
         if (!_settings.Enabled)
         {
             _runtimeAssistanceActive = false;
+            ResetSimpleHoldState();
             _openXrBackend.SetHeld(true, _settings.PitchEnabled);
             return;
         }
 
-        bool simplePressed = !HasAssignedBinding(_settings.SimpleActivationBinding) ||
-                             HotasBindingDialog.IsBindingPressed(_settings.SimpleActivationBinding);
+        bool rawSimplePressed = !HasAssignedBinding(_settings.SimpleActivationBinding) ||
+                                HotasBindingDialog.IsBindingPressed(_settings.SimpleActivationBinding);
+        bool simplePressed;
+        if (_settings.MovementMode == "Simple")
+            simplePressed = ResolveSimpleHold(rawSimplePressed);
+        else
+        {
+            ResetSimpleHoldState();
+            simplePressed = false;
+        }
+
         _runtimeAssistanceActive = _settings.MovementMode == "Simple"
             ? simplePressed
             : _settings.AdvancedActivationBehavior == "Hold" ? togglePressed : _toggleActive;
@@ -1452,6 +1494,36 @@ internal sealed class NeckAssistForm : Form
         _lastRecenterPressed = recenterPressed;
 
         _openXrBackend.SetHeld(false, _settings.PitchEnabled);
+    }
+
+    private bool ResolveSimpleHold(bool rawPressed)
+    {
+        if (rawPressed)
+        {
+            _simpleHoldLatched = true;
+            _simpleHoldReleaseCandidateAt = 0;
+            return true;
+        }
+
+        if (!_simpleHoldLatched) return false;
+        long now = Environment.TickCount64;
+        if (_simpleHoldReleaseCandidateAt == 0)
+        {
+            _simpleHoldReleaseCandidateAt = now;
+            return true;
+        }
+
+        if (now - _simpleHoldReleaseCandidateAt < SimpleHoldReleaseDebounceMilliseconds)
+            return true;
+
+        ResetSimpleHoldState();
+        return false;
+    }
+
+    private void ResetSimpleHoldState()
+    {
+        _simpleHoldLatched = false;
+        _simpleHoldReleaseCandidateAt = 0;
     }
 
     private static bool HasAssignedBinding(string? binding) =>
@@ -1883,7 +1955,8 @@ internal sealed class HotasBindingDialog : Form
         HashSet<string>? direct = null;
         foreach (string token in tokens)
         {
-            if (token.StartsWith("DI:", StringComparison.OrdinalIgnoreCase))
+            if (token.StartsWith("DI:", StringComparison.OrdinalIgnoreCase) ||
+                token.StartsWith("XI:", StringComparison.OrdinalIgnoreCase))
             {
                 direct ??= HotasDirectInput.ReadPressed();
                 if (!direct.Contains(token)) return false;

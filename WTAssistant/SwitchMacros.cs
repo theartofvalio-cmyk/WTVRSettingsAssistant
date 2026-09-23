@@ -124,7 +124,8 @@ internal sealed partial class AdvancedSwitchService
     private void PollCustomActions(SwitchDefinition definition, PhysicalJoystick device, Runtime runtime)
     {
         runtime.Macro ??= new();
-        if (_flapSuspensions > 0 && IsEditorForeground()) { runtime.Macro.Reset(); return; }
+        if (!_flapGameFocused() || (_flapSuspensions > 0 && IsEditorForeground()))
+        { runtime.Macro.Reset(); return; }
         string? key = runtime.Macro.Step(definition, device.ButtonMask, _utcNow(), Settings.DebounceMs,
             !KeyboardTapSender.KeyboardTapInProgress);
         if (key is null) return;

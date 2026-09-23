@@ -104,7 +104,7 @@ internal sealed class HiddenKeybindsForm : Form
         ["Create custom switch positions and map each position to a keyboard key or mouse button."] = "Keybind.AdvancedDescription",
         ["MANAGE CUSTOM SWITCHES"] = "Keybind.ManageSwitches",
         ["CLEAR"] = "Assistant.Clear",
-        ["Important: keep WT VR Settings Assistant running while using these bindings. If War Thunder runs as administrator, run this app as administrator too so the keyboard commands can reach the game."] = "Keybind.Notice",
+        ["Important: keep War Thunder VR Assistant running while using these bindings. If War Thunder runs as administrator, run this app as administrator too so the keyboard commands can reach the game."] = "Keybind.Notice",
     };
     public void ToggleAssistance() { if (_enabledToggle != null) _enabledToggle.Checked = !_enabledToggle.Checked; }
 
@@ -209,7 +209,7 @@ internal sealed class HiddenKeybindsForm : Form
         advancedPanel.Controls.AddRange(new Control[] { advancedTitle, advancedDescription, advancedToggleLabel, _manageSwitchesButton });
         _manageSwitchesButton.Click += (_, _) =>
         {
-            using AdvancedSwitchManagerForm manager = new(_advancedSwitchService, _languageCode);
+            using AdvancedSwitchManagerForm manager = new(_advancedSwitchService, _languageCode) { Icon = Icon };
             manager.ShowDialog(this);
             _advancedSwitchService.SetEnabled(true);
         };
@@ -220,7 +220,7 @@ internal sealed class HiddenKeybindsForm : Form
         _status.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         Controls.Add(_status);
 
-        Label notice = MakeLabel("Important: keep WT VR Settings Assistant running while using these bindings. If War Thunder runs as administrator, run this app as administrator too so the keyboard commands can reach the game.", 10.5f, FontStyle.Italic, ThemePalette.FromArgb(255, 190, 70));
+        Label notice = MakeLabel("Important: keep War Thunder VR Assistant running while using these bindings. If War Thunder runs as administrator, run this app as administrator too so the keyboard commands can reach the game.", 10.5f, FontStyle.Italic, ThemePalette.FromArgb(255, 190, 70));
         notice.SetBounds(32, 724, 1320, 48);
         notice.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         Controls.Add(notice);
@@ -479,11 +479,18 @@ internal sealed class HiddenKeybindsForm : Form
 
     private HiddenKeybindSettings LoadSettings()
     {
-        try
+        foreach (string candidate in new[] { _settingsPath, _settingsPath + ".bak" })
         {
-            if (File.Exists(_settingsPath)) return JsonSerializer.Deserialize<HiddenKeybindSettings>(File.ReadAllText(_settingsPath)) ?? new HiddenKeybindSettings();
+            try
+            {
+                if (!File.Exists(candidate)) continue;
+                HiddenKeybindSettings? settings = JsonSerializer.Deserialize<HiddenKeybindSettings>(File.ReadAllText(candidate));
+                if (settings is not null) return settings;
+            }
+            catch (JsonException) { }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
         }
-        catch { }
         return new HiddenKeybindSettings();
     }
 
@@ -492,7 +499,7 @@ internal sealed class HiddenKeybindsForm : Form
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_settingsPath)!);
-            File.WriteAllText(_settingsPath, JsonSerializer.Serialize(_settings, new JsonSerializerOptions { WriteIndented = true }));
+            AtomicFile.WriteTextWithBackup(_settingsPath, JsonSerializer.Serialize(_settings, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch { }
     }

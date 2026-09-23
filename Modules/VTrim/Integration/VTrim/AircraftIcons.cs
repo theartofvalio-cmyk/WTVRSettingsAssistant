@@ -59,4 +59,48 @@ internal static class AircraftIcons
         }
         g.Restore(state);
     }
+    public static Bitmap CreateFallbackArtwork(string? type)
+    {
+        var bitmap = new Bitmap(180, 120, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        using Graphics g = Graphics.FromImage(bitmap);
+        g.Clear(Color.Transparent);
+        Draw(g, new Rectangle(24, 8, 132, 104), string.IsNullOrWhiteSpace(type) ? "Prop Plane" : type, Color.Gainsboro);
+        return bitmap;
+    }
+
+    public static Bitmap CreateDefaultProfileArtwork()
+    {
+        var bitmap = new Bitmap(180, 120, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        using Graphics g = Graphics.FromImage(bitmap);
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        using var outline = new Pen(Color.WhiteSmoke, 3f) { LineJoin = LineJoin.Round, StartCap = LineCap.Round, EndCap = LineCap.Round };
+        using var gold = new Pen(Theme.Accent, 4f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        using var metal = new SolidBrush(Color.FromArgb(105, 225, 225, 225));
+        using var glass = new SolidBrush(Color.FromArgb(150, 168, 207));
+
+        // Pilot/profile silhouette.
+        g.FillEllipse(glass, 34, 18, 44, 44);
+        g.DrawEllipse(outline, 34, 18, 44, 44);
+        using (var shoulders = new GraphicsPath())
+        {
+            shoulders.AddBezier(18, 105, 20, 76, 37, 66, 56, 66);
+            shoulders.AddBezier(56, 66, 75, 66, 92, 76, 94, 105);
+            shoulders.CloseFigure();
+            g.FillPath(metal, shoulders);
+            g.DrawPath(outline, shoulders);
+        }
+
+        // Three tuning sliders communicate that this is a settings template.
+        int[] ys = { 34, 60, 86 };
+        int[] knobs = { 128, 151, 118 };
+        foreach (int y in ys) g.DrawLine(outline, 108, y, 168, y);
+        using var accentFill = new SolidBrush(Theme.Accent);
+        for (int i = 0; i < ys.Length; i++)
+        {
+            g.DrawLine(gold, knobs[i] - 8, ys[i], knobs[i] + 8, ys[i]);
+            g.FillEllipse(accentFill, knobs[i] - 5, ys[i] - 5, 10, 10);
+        }
+        return bitmap;
+    }
+
 }

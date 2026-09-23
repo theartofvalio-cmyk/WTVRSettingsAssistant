@@ -14,6 +14,7 @@ using System.Threading.Tasks;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -32,6 +33,12 @@ internal static class Program
     [STAThread]
     static void Main(string[] args)
     {
+        if (args.Any(arg => string.Equals(arg, "--self-test", StringComparison.OrdinalIgnoreCase)))
+        {
+            Environment.ExitCode = SelfTestRunner.Run();
+            return;
+        }
+
         using Mutex instanceMutex = new(initiallyOwned: true, InstanceMutexName, out bool isFirstInstance);
         using EventWaitHandle activateEvent = new(false, EventResetMode.AutoReset, ActivateEventName);
         if (!isFirstInstance)
@@ -70,15 +77,12 @@ public static class AssetManager
 {
     public static Image LoadImage(string fileName)
     {
+        if (Path.GetFileName(fileName).Equals("VRA.png", StringComparison.OrdinalIgnoreCase))
+            return BrandingLogo.Create();
         Image? themed = IllustratedTheme.Asset(fileName);
         if (themed != null) return themed;
         Assembly assembly = Assembly.GetExecutingAssembly();
-
-        string? resourceName = assembly
-            .GetManifestResourceNames()
-            .FirstOrDefault(name =>
-                name.EndsWith($".Assets.{fileName}", StringComparison.OrdinalIgnoreCase) ||
-                name.EndsWith($".{fileName}", StringComparison.OrdinalIgnoreCase));
+        string? resourceName = AppThemeAssets.ResolveResourceName(assembly, fileName);
 
         if (resourceName == null)
         {
@@ -99,12 +103,7 @@ public static class AssetManager
     public static Stream LoadResourceStream(string fileName)
     {
         Assembly assembly = Assembly.GetExecutingAssembly();
-
-        string? resourceName = assembly
-            .GetManifestResourceNames()
-            .FirstOrDefault(name =>
-                name.EndsWith($".Assets.{fileName}", StringComparison.OrdinalIgnoreCase) ||
-                name.EndsWith($".{fileName}", StringComparison.OrdinalIgnoreCase));
+        string? resourceName = AppThemeAssets.ResolveResourceName(assembly, fileName);
 
         if (resourceName == null)
         {
@@ -127,12 +126,7 @@ public static class AssetManager
     public static Icon LoadIcon(string fileName)
     {
         Assembly assembly = Assembly.GetExecutingAssembly();
-
-        string? resourceName = assembly
-            .GetManifestResourceNames()
-            .FirstOrDefault(name =>
-                name.EndsWith($".Assets.{fileName}", StringComparison.OrdinalIgnoreCase) ||
-                name.EndsWith($".{fileName}", StringComparison.OrdinalIgnoreCase));
+        string? resourceName = AppThemeAssets.ResolveResourceName(assembly, fileName);
 
         if (resourceName == null)
         {
@@ -170,7 +164,7 @@ public partial class MainForm : Form
     // Change these to true later if you want to re-enable F12 layout editing and external layout files.
     private static readonly bool LayoutEditorEnabled = false;
     private static readonly bool LoadExternalLayoutFiles = false;
-    private const string CurrentVersion = "2.0";
+    private const string CurrentVersion = "2.0.1";
     private const string BuildChannelLabel = "";
     private const string GitHubLatestReleaseApi = "https://api.github.com/repos/theartofvalio-cmyk/WTVRSettingsAssistant/releases/latest";
     private const string GitHubReleasesApi = "https://api.github.com/repos/theartofvalio-cmyk/WTVRSettingsAssistant/releases?per_page=30";
@@ -1364,6 +1358,7 @@ render{
         public bool StartMinimizedToTray { get; set; }
         public bool UseTestServer { get; set; }
         public string LanguageCode { get; set; } = "en";
+        public string UiTheme { get; set; } = AppThemeAssets.DefaultTheme;
         public int WindowWidth { get; set; }
         public int WindowHeight { get; set; }
         // Incremented when the recommended startup geometry changes. This lets
@@ -1673,12 +1668,12 @@ render{
                 if (LayoutEditMode)
                 {
                     showPage();
-                    setTitle("WT VR Settings Assistant  -  CANVAS EDIT MODE | Ctrl+Click multi-select | Drag | Snap | Ctrl+L/R/T/B align | Ctrl+E distribute | Alt resize = stretch | Ctrl+S save");
+                    setTitle("War Thunder VR Assistant  -  CANVAS EDIT MODE | Ctrl+Click multi-select | Drag | Snap | Ctrl+L/R/T/B align | Ctrl+E distribute | Alt resize = stretch | Ctrl+S save");
                 }
                 else
                 {
                     SaveLayout();
-                    setTitle("WT VR Settings Assistant");
+                    setTitle("War Thunder VR Assistant");
                 }
 
                 return true;
@@ -1713,7 +1708,7 @@ render{
             {
                 SaveLayout();
                 LayoutEditMode = false;
-                setTitle("WT VR Settings Assistant");
+                setTitle("War Thunder VR Assistant");
                 Invalidate();
                 return true;
             }
@@ -1721,7 +1716,7 @@ render{
             if (e.Control && e.KeyCode == Keys.S)
             {
                 SaveLayout();
-                setTitle("WT VR Settings Assistant  -  LAYOUT SAVED");
+                setTitle("War Thunder VR Assistant  -  LAYOUT SAVED");
                 return true;
             }
 
@@ -2986,7 +2981,9 @@ render{
     private bool _lastKnownGameRunning;
     private string _pendingControlsPresetPath = "";
     private string _pendingControlsProfileName = "";
-    private bool _updatePromptShown;
+    private bool _updateCheckInProgress;
+    private bool _updateDeferredForGame;
+    private DateTime _nextAutomaticUpdateCheckUtc = DateTime.MaxValue;
     private string _latestReleaseUrl = GitHubReleasesUrl;
     private NeckAssistForm? _neckAssistForm;
     private HiddenKeybindsForm? _hiddenKeybindsForm;
@@ -3051,6 +3048,7 @@ render{
     private bool _startMinimizedToTray;
     private bool _useTestServer;
     private string _languageCode = "en";
+    private string _uiTheme = AppThemeAssets.DefaultTheme;
     private bool _allowExit;
     private NotifyIcon? _trayIcon;
     private AviationHomePage? _aviationHome;
@@ -3160,7 +3158,8 @@ render{
                 // Paint child controls through a single composited buffer. This
                 // prevents the dark themed shell from flashing black when clicks
                 // trigger several transparent controls to redraw at once.
-                cp.ExStyle |= 0x02000000; // WS_EX_COMPOSITED
+                // Child containers are buffered individually by BufferedUi.
+                // Whole-window composition delays native/WebView2 repainting.
             }
             return cp;
         }
@@ -3182,7 +3181,7 @@ render{
     {
         AutoScaleMode = AutoScaleMode.None;
 
-        Text = T("Tray.AppName");
+        Text = "War Thunder VR Assistant";
         HandleCreated += (_,_) => IllustratedTheme.ApplyWindowChrome(this);
         // 1.8.1 could start at 1300x675 and then expose scrollbars at common
         // Windows DPI settings. The illustrated dashboard is designed around a
@@ -3194,6 +3193,7 @@ render{
         MinimumSize = new Size(S(1120), S(630));
         BackColor = _backgroundColor;
         DoubleBuffered = true;
+        BufferedUi.Attach(this);
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
         KeyPreview = true;
         KeyDown += MainForm_KeyDown;
@@ -3221,11 +3221,23 @@ render{
         _controlsReapplyTimer.Interval = 1000;
         _controlsReapplyTimer.Tick += (_, _) => ReapplyPendingControlsAfterGameExit();
         _gameRunningStateTimer.Interval = 1000;
-        _gameRunningStateTimer.Tick += (_, _) => RefreshGameRunningVisualState();
+        _gameRunningStateTimer.Tick += (_, _) =>
+        {
+            RefreshGameRunningVisualState();
+            if (_updateDeferredForGame && !_updateCheckInProgress && !IsWarThunderRunningOrStarting())
+            {
+                _updateDeferredForGame = false;
+                _ = CheckForUpdatesAsync(false);
+            }
+            if (!_updateCheckInProgress && DateTime.UtcNow >= _nextAutomaticUpdateCheckUtc)
+                _ = CheckForUpdatesAsync(false);
+        };
         _gameRunningStateTimer.Start();
 
-        LoadAssets();
+        AppUpgradeMigration.Run(SettingsFolder);
         LoadState();
+        AppThemeAssets.SetActiveTheme(_uiTheme);
+        LoadAssets();
         LoadGameInstallations();
         ConfigureTrayIcon();
         _lastNormalClientSize = ClientSize;
@@ -3296,7 +3308,7 @@ render{
     private void ApplyLocalization()
     {
         _languageCode = AppText.Normalize(_languageCode);
-        Text = T("Tray.AppName");
+        Text = "War Thunder VR Assistant";
         _aviationHome?.SetLanguage(_languageCode);
         if (_themeNavigation != null)
         {
@@ -3305,10 +3317,11 @@ render{
                 button.Text = button.PageKey switch
                 {
                     "home" => T("Nav.Home"),
-                    "profiles" => "Settings",
+                    "profiles" => T("Nav.Profiles"),
                     "neck" => T("Nav.Neck"),
                     "keybind" => T("Nav.Keybind"),
                     "vtrim" => T("Nav.VTrim"),
+                    "vtrim-profiles" => T("Nav.Profiles"),
                     "gameupdates" => T("Nav.GameUpdates"),
                     "options" => T("Nav.Options"),
                     "info" => T("Nav.Info"),
@@ -3843,7 +3856,7 @@ render{
             ToggleKeysFromHome,
             SelectGameServerChannel,
             RefreshServerSignalsFromUi,
-            LaunchWarThunder,
+            HomePrimaryAction,
             ArmSecretCode,
             OpenDiscord,
             OpenYouTube,
@@ -3966,8 +3979,7 @@ render{
         _themeNavigation = new Panel
         {
             BackColor = IllustratedTheme.Panel,
-            AutoScroll = true,
-            AutoScrollMinSize = new Size(0, 650),
+            AutoScroll = false,
             Bounds = new Rectangle(10, 12, width, ClientSize.Height - 78),
             Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left
         };
@@ -3993,11 +4005,11 @@ render{
         // the Home launch button when the selected server needs an update.
         (string Key, string Text, string Icon, Action Action)[] links = [
             ("home", T("Nav.Home"), "home", () => Navigate(() => ShowScreen(_mainPanel))),
-            ("profiles", "Settings", "folder", () => Navigate(() => ShowScreen(_settingsPanel))),
+            ("profiles", T("Nav.Profiles"), "folder", () => Navigate(() => ShowScreen(_settingsPanel))),
             ("neck", T("Nav.Neck"), "head", () => Navigate(ToggleNeckAssistPanel)),
             ("keybind", T("Nav.Keybind"), "keys", () => Navigate(ToggleHiddenKeybindsPanel)),
-            ("vtrim", "VTrim Assistant", "trim", () => Navigate(OpenVTrim)),
-            ("vtrim-profiles", "Profiles", "folder", () => Navigate(() => { OpenVTrim(); _vtrimForm?.OpenAircraftProfiles(); })),
+            ("vtrim", T("Nav.VTrim"), "trim", () => Navigate(OpenVTrim)),
+            ("vtrim-profiles", T("Nav.Profiles"), "folder", () => Navigate(() => { OpenVTrim(); _vtrimForm?.OpenAircraftProfiles(); })),
             ("options", T("Nav.Options"), "gear", ShowApplicationOptionsDialog),
             ("info", T("Nav.Info"), "info", () => Navigate(() => ShowScreen(_aboutPanel))),
             ("updates", T("Nav.Updates"), "download", CheckForUpdatesFromButton)];
@@ -4030,7 +4042,7 @@ render{
         // only the selected circuit + local game/update information.
 
         using Font versionFont = new("Segoe UI", Math.Max(S(20), S(24)), FontStyle.Bold, GraphicsUnit.Pixel);
-        string version = "v " + CurrentVersion;
+        string version = string.IsNullOrWhiteSpace(BuildChannelLabel) ? $"v {CurrentVersion}" : $"v {CurrentVersion} {BuildChannelLabel}";
         Size versionSize = TextRenderer.MeasureText(version, versionFont, Size.Empty, TextFormatFlags.NoPadding);
         int versionX = ClientSize.Width - versionSize.Width - S(24);
         int versionY = footerLineY + Math.Max(0, (footerHeight - S(8) - versionSize.Height) / 2);
@@ -4038,8 +4050,8 @@ render{
 
         int statusWidth = Math.Max(S(200), versionX - S(72));
         if (_aircraftHomeFilter?.Visible == true) statusWidth = Math.Max(S(140), _aircraftHomeFilter.Left - S(42));
-        int statusFontSize = S(15);
-        int minimumStatusFontSize = Math.Max(9, S(10));
+        int statusFontSize = S(18);
+        int minimumStatusFontSize = Math.Max(12, S(13));
         while (statusFontSize > minimumStatusFontSize)
         {
             using Font test = new("Segoe UI", statusFontSize, FontStyle.Bold, GraphicsUnit.Pixel);
@@ -4090,7 +4102,6 @@ render{
             int footerHeight = S(66);
             Padding = new Padding(navigationWidth + S(20), S(12), S(12), footerHeight);
             _themeNavigation.SetBounds(S(10), S(12), navigationWidth, Math.Max(1, ClientSize.Height - S(78)));
-            _themeNavigation.AutoScrollMinSize = new Size(0, S(26 + 9 * 56));
 
             if (_themeBrand != null)
             {
@@ -4110,8 +4121,8 @@ render{
                 bool child = buttons[i].PageKey == "vtrim-profiles";
                 buttons[i].Visible = !child || _vtrimNavigationExpanded;
                 if (!buttons[i].Visible) continue;
-                buttons[i].SetBounds(S(child ? 38 : 8), S(16 + navRow++ * 56), navigationWidth - S(child ? 46 : 16), S(50));
-                SetOwnedFont(buttons[i], 21 * scale, FontStyle.Bold);
+                buttons[i].SetBounds(S(child ? 38 : 8), S(16 + navRow++ * 62), navigationWidth - S(child ? 46 : 16), S(58));
+                SetOwnedFont(buttons[i], 20 * scale, FontStyle.Bold);
             }
         }
         finally
@@ -4164,7 +4175,7 @@ render{
     {
         if (_neckAssistForm == null || _neckAssistForm.IsDisposed)
         {
-            _neckAssistForm = new NeckAssistForm(AppFolder);
+            _neckAssistForm = new NeckAssistForm(AppFolder) { Icon = this.Icon };
             _neckAssistForm.ApplyLanguage(_languageCode);
             _neckAssistForm.AssistanceStateChanged += (_, _) => RefreshNeckAssistIcon();
             _neckAssistForm.ConfigureNavigation(_homeImage, _infoImage, () => { _neckAssistForm.Hide(); ShowScreen(_aboutPanel); });
@@ -4203,6 +4214,7 @@ render{
                 _hiddenKeybindsForm?.Hide();
                 ShowScreen(_aboutPanel);
             });
+            _hiddenKeybindsForm.Icon = this.Icon;
             _hiddenKeybindsForm.ApplyLanguage(_languageCode);
             _hiddenKeybindsForm.AssistantStateChanged += (_, _) => RefreshKeyBindAssistantIcon();
             _hiddenKeybindsForm.CloseRequested += (_, _) =>
@@ -4461,8 +4473,8 @@ render{
         {
             Text = T("Nav.Options"),
             StartPosition = FormStartPosition.CenterParent,
-            ClientSize = new Size(1080, 740),
-            MinimumSize = new Size(860, 640),
+            ClientSize = new Size(1080, 810),
+            MinimumSize = new Size(860, 700),
             FormBorderStyle = FormBorderStyle.Sizable,
             MaximizeBox = false,
             MinimizeBox = false,
@@ -4475,14 +4487,15 @@ render{
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 8,
+            RowCount = 9,
             Padding = new Padding(40, 24, 40, 32),
             BackColor = _backgroundColor
         };
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 112));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 72));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 72));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -4533,8 +4546,46 @@ render{
         language.ValueMember = nameof(LanguageOption.Code);
         language.SelectedItem = language.Items.Cast<LanguageOption>()
             .FirstOrDefault(languageOption => languageOption.Code == _languageCode) ?? language.Items[0];
+        LanguageFlagRenderer.Configure(language);
         languagePanel.Controls.Add(languageLabel, 0, 0);
         languagePanel.Controls.Add(language, 1, 0);
+
+        var themePanel = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 1,
+            Margin = new Padding(0, 4, 0, 4)
+        };
+        themePanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 30));
+        themePanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 70));
+        Label themeLabel = new()
+        {
+            Text = T("Options.Theme"),
+            Font = UiFont(21, FontStyle.Bold),
+            ForeColor = _textColor,
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Padding = new Padding(48, 0, 12, 0)
+        };
+        ComboBox theme = new()
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            FlatStyle = FlatStyle.Flat,
+            BackColor = ThemePalette.FromArgb(18, 30, 34),
+            ForeColor = _textColor,
+            Font = UiFont(19, FontStyle.Bold),
+            Dock = DockStyle.Fill,
+            Margin = new Padding(4, 12, 0, 10)
+        };
+        foreach (string themeName in AppThemeAssets.AvailableThemes)
+            theme.Items.Add(AppThemeAssets.DisplayName(themeName));
+        int themeIndex = AppThemeAssets.AvailableThemes
+            .Select((name, index) => (name, index))
+            .FirstOrDefault(pair => pair.name.Equals(_uiTheme, StringComparison.OrdinalIgnoreCase)).index;
+        theme.SelectedIndex = Math.Clamp(themeIndex, 0, Math.Max(0, theme.Items.Count - 1));
+        themePanel.Controls.Add(themeLabel, 0, 0);
+        themePanel.Controls.Add(theme, 1, 0);
 
         var betaPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(4, 2, 4, 2) };
         ThemeCheckBox beta = new()
@@ -4699,6 +4750,7 @@ render{
 
         root.Controls.Add(heading, 0, 0);
         root.Controls.Add(languagePanel, 0, 1);
+        root.Controls.Add(themePanel, 0, 2);
         var showAircraft = new ThemeCheckBox { Text = "Show aircraft on Home", Checked = _showHomeAircraft,
             Font = UiFont(21, FontStyle.Bold), ForeColor = _textColor, Dock = DockStyle.Fill };
         var showKeybinds = new ThemeCheckBox { Text = "Show keybind profiles on Home", Checked = _showHomeKeybinds,
@@ -4708,12 +4760,12 @@ render{
         homeOptions.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
         homeOptions.Controls.Add(showAircraft, 0, 0);
         homeOptions.Controls.Add(showKeybinds, 0, 1);
-        root.Controls.Add(homeOptions, 0, 2);
-        root.Controls.Add(minimize, 0, 3);
-        root.Controls.Add(startup, 0, 4);
-        root.Controls.Add(trayHelp, 0, 5);
-        root.Controls.Add(vjoyPanel, 0, 6);
-        root.Controls.Add(buttons, 0, 7);
+        root.Controls.Add(homeOptions, 0, 3);
+        root.Controls.Add(minimize, 0, 4);
+        root.Controls.Add(startup, 0, 5);
+        root.Controls.Add(trayHelp, 0, 6);
+        root.Controls.Add(vjoyPanel, 0, 7);
+        root.Controls.Add(buttons, 0, 8);
         dialog.Controls.Add(root);
 
         // Resize typography and chrome together. This keeps the options dialog
@@ -4731,19 +4783,21 @@ render{
         CaptureOptionFonts(dialog);
         Padding baseRootPadding = root.Padding;
         Padding baseLanguagePadding = languageLabel.Padding;
+        Padding baseThemePadding = themeLabel.Padding;
         Padding baseBetaPadding = betaPanel.Padding;
         Padding baseTrayPadding = trayHelp.Padding;
         Padding baseSaveMargin = save.Margin;
         Padding baseCancelMargin = cancel.Margin;
-        float[] optionRows = { 58F, 70F, 112F, 72F, 72F, 0F, 96F, 116F };
+        float[] optionRows = { 58F, 70F, 70F, 112F, 72F, 72F, 0F, 96F, 116F };
         void ApplyOptionScale()
         {
-            float scale = Math.Clamp(Math.Min(dialog.ClientSize.Width / 1080F, dialog.ClientSize.Height / 680F), 0.92F, 1.55F);
+            float scale = Math.Clamp(Math.Min(dialog.ClientSize.Width / 1080F, dialog.ClientSize.Height / 750F), 0.92F, 1.55F);
             Padding SP(Padding p) => new(
                 (int)Math.Round(p.Left * scale), (int)Math.Round(p.Top * scale),
                 (int)Math.Round(p.Right * scale), (int)Math.Round(p.Bottom * scale));
             root.Padding = SP(baseRootPadding);
             languageLabel.Padding = SP(baseLanguagePadding);
+            themeLabel.Padding = SP(baseThemePadding);
             betaPanel.Padding = SP(baseBetaPadding);
             trayHelp.Padding = SP(baseTrayPadding);
             save.Margin = SP(baseSaveMargin);
@@ -4786,6 +4840,9 @@ render{
         LayoutAircraftHomeFilter();
         _startMinimizedToTray = startup.Checked;
         _languageCode = language.SelectedItem is LanguageOption option ? option.Code : "en";
+        string previousTheme = _uiTheme;
+        int selectedThemeIndex = Math.Clamp(theme.SelectedIndex, 0, AppThemeAssets.AvailableThemes.Count - 1);
+        _uiTheme = AppThemeAssets.AvailableThemes[selectedThemeIndex];
         ApplyLocalization();
         if (!SetWindowsStartup(_startWithWindows))
         {
@@ -4794,6 +4851,11 @@ render{
                 T("Options.DialogTitle"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         SaveState();
+        if (!string.Equals(previousTheme, _uiTheme, StringComparison.OrdinalIgnoreCase))
+        {
+            _allowExit = true;
+            Application.Restart();
+        }
     }
 
     private void ConfigureTrayIcon()
@@ -5699,7 +5761,7 @@ render{
 
         _aboutCanvas.AddText(
             "AboutTitle",
-            "WAR THUNDER VR SETTINGS ASSISTANT",
+            "WAR THUNDER VR ASSISTANT",
             new Rectangle(40, 35, 1280, 65),
             40f,
             FontStyle.Bold,
@@ -5716,7 +5778,6 @@ render{
             StringAlignment.Near);
 
         _aboutCanvas.AddRectangle("AboutTopDivider", new Rectangle(40, 250, 1480, 2), ThemePalette.FromArgb(62, 82, 88));
-        _aboutCanvas.AddRectangle("AboutColumnDivider", new Rectangle(785, 285, 2, 410), ThemePalette.FromArgb(62, 82, 88));
 
         _aboutCanvas.AddText(
             "HowToTitle",
@@ -5742,8 +5803,8 @@ render{
 
         _aboutCanvas.AddText(
             "PatchNotesTitle",
-            $"VERSION {CurrentVersion} HIGHLIGHTS",
-            new Rectangle(830, 275, 690, 55),
+            $"PATCH NOTES  ·  v1.0 → v{CurrentVersion}",
+            new Rectangle(40, 275, 1480, 55),
             32f,
             FontStyle.Bold,
             StringAlignment.Near,
@@ -5758,7 +5819,7 @@ render{
             "• App options for beta updates, minimize to tray and start with Windows\n\n" +
             "• Single-instance protection: reopening restores the existing window\n\n" +
             "• Safer updates preserve settings, graphics profiles and control profiles",
-            new Rectangle(830, 340, 690, 350),
+            new Rectangle(40, 340, 1480, 470),
             24f,
             FontStyle.Regular,
             StringAlignment.Near,
@@ -5784,19 +5845,25 @@ render{
         });
 
         _aboutCanvas.ApplyLayout(ParseBakedLayout(BakedAboutLayoutJson));
+        _aboutCanvas.SetItemVisible("HowToTitle", false);
+        _aboutCanvas.SetItemVisible("HowToText", false);
+        _aboutCanvas.SetItemVisible("AboutColumnDivider", false);
+        _aboutCanvas.ApplyLayout(new Dictionary<string,LayoutRect>
+        {
+            ["PatchNotesTitle"]=new(){X=40,Y=275,Width=1480,Height=55,FontSize=32},
+            ["PatchNotesText"]=new(){X=40,Y=340,Width=1480,Height=470,FontSize=24},
+            ["OpenSourceText"]=new(){X=40,Y=835,Width=1480,Height=80,FontSize=22},
+        });
         if(IllustratedTheme.Enabled)
         {
             foreach(string key in new[]{"InfoIcon","HomeIcon","AboutTopDivider","AboutColumnDivider"}) _aboutCanvas.SetItemVisible(key,false);
-            _aboutCanvas.AddRectangle("InstructionsCard",new Rectangle(30,255,755,635),IllustratedTheme.Panel);
-            _aboutCanvas.AddRectangle("ChangesCard",new Rectangle(805,255,785,635),IllustratedTheme.Panel);
+            _aboutCanvas.AddRectangle("ChangesCard",new Rectangle(30,255,1560,635),IllustratedTheme.Panel);
             _aboutCanvas.ApplyLayout(new Dictionary<string,LayoutRect>
             {
                 ["AboutTitle"]=new(){X=40,Y=20,Width=1520,Height=60,FontSize=38},
                 ["AboutPurpose"]=new(){X=40,Y=100,Width=1510,Height=130,FontSize=25},
-                ["HowToTitle"]=new(){X=55,Y=280,Width=700,Height=50,FontSize=30},
-                ["HowToText"]=new(){X=55,Y=345,Width=700,Height=520,FontSize=24,Text="1. Select the War Thunder folder. The app detects config.blk and the launcher.\n\n2. Capture Monitor/VR graphics and optional control profiles. Select MONITOR or VR to apply them.\n\n3. Enable Neck Assistant before starting VR. SteamVR OpenXR and VDXR are supported. Gold switches indicate enabled features in this theme.\n\n4. Advanced offers adjustable curves with Toggle or Hold. Simple adds rear rotation while you hold its input.\n\n5. Assign keyboard, mouse or HOTAS inputs. Simple uses the game's recenter; its deadzone chooses the viewing direction."},
-                ["PatchNotesTitle"]=new(){X=835,Y=280,Width=725,Height=50,FontSize=30},
-                ["PatchNotesText"]=new(){X=835,Y=345,Width=725,Height=520,FontSize=24,Text="• KeyBind Assistant maps keyboard, mouse and HOTAS inputs to hidden game commands.\n\n• VR head Up/Down and battlefield map shortcuts.\n\n• Persistent assistant enable states.\n\n• Corrected input injection and privilege errors.\n\n• Beta updates, tray and Windows startup options.\n\n• Reopening restores one existing app instance.\n\n• Updates preserve settings and profiles."},
+                ["PatchNotesTitle"]=new(){X=55,Y=280,Width=1500,Height=50,FontSize=30},
+                ["PatchNotesText"]=new(){X=55,Y=345,Width=1500,Height=520,FontSize=24,Text="• KeyBind Assistant maps keyboard, mouse and HOTAS inputs to hidden game commands.\n\n• Physical ON/OFF switch support and persistent assistant states.\n\n• Embedded VTrim with aircraft profiles, physical-axis routing and response curves.\n\n• Automatic aircraft detection and per-aircraft Custom Profiles.\n\n• Full-page profile editing, copy/paste tools and custom curve points.\n\n• Improved launcher/update handling, localization, rendering and responsive layouts."},
                 ["OpenSourceText"]=new(){X=40,Y=913,Width=1510,Height=66,FontSize=22},
             });
             _aboutCanvas.Visible=false;
@@ -6289,10 +6356,12 @@ render{
     internal void SetHomeServerVersions(Version? live, Version? test) => _aviationHome?.SetServerVersions(live, test);
     private GameServerChannel SelectedGameServerChannel => _useTestServer ? GameServerChannel.Test : GameServerChannel.Live;
 
-    private void SelectGameServerChannel(GameServerChannel channel)
+    private async void SelectGameServerChannel(GameServerChannel channel)
     {
-        if (_launchBusy) return;
-        SwitchGameInstallation(channel);
+        if (_launchBusy || channel == SelectedGameServerChannel) return;
+        GameServerChannel previous = SelectedGameServerChannel;
+        if (!SwitchGameInstallation(channel)) return;
+        await HandleServerSwitchAsync(previous, channel);
     }
 
     private bool ApplySelectedGameServer(bool showError)
@@ -6300,10 +6369,11 @@ render{
         try
         {
             if (!IsConfigSelected()) throw new IOException(T("Warning.SelectWarThunderInstall"));
-            if (GameIsRunning()) throw new IOException(T("Warning.CloseGameBeforeServer"));
+            if (IsWarThunderRunningOrStarting()) throw new IOException(T("Warning.CloseGameBeforeServer"));
 
             string root = Path.GetDirectoryName(_configBlkPath)
                 ?? throw new IOException(T("Warning.InvalidConfigPath"));
+            if (LauncherRunningIn(root)) throw new IOException(T("Warning.CloseLauncherBeforeServer"));
             if (SelectedGameServerChannel == GameServerChannel.Test)
                 PrepareDevServerWorkspace(root, _configBlkPath, enteringTest: true);
 
@@ -6321,7 +6391,7 @@ render{
         }
     }
 
-    private bool ApplyGraphicsApiToConfig(AppliedMode mode)
+    private bool ApplyGraphicsApiToConfig(AppliedMode mode, bool duringLaunch = false)
     {
         if (mode == AppliedMode.None ||
             string.IsNullOrWhiteSpace(_configBlkPath) ||
@@ -6330,6 +6400,8 @@ render{
             return true;
         }
 
+        string? writeWarning = GetGameConfigWriteWarning(duringLaunch);
+        if (writeWarning != null) { ShowWarning(writeWarning); return false; }
         try
         {
             string configText = WarThunderServerConfig.Apply(
@@ -6433,7 +6505,7 @@ render{
             // Re-apply the renderer right before launch in case another tool or the game changed config.blk.
             if (_lastAppliedMode != AppliedMode.None)
             {
-                if (!ApplyGraphicsApiToConfig(_lastAppliedMode)) return;
+                if (!ApplyGraphicsApiToConfig(_lastAppliedMode, duringLaunch: true)) return;
             }
 
             string gameFolder = Path.GetDirectoryName(_warThunderExePath) ?? AppContext.BaseDirectory;
@@ -6465,9 +6537,16 @@ render{
                 WorkingDirectory = gameFolder,
                 UseShellExecute = true
             });
+            // The mini-launcher/anti-cheat bootstrap can take several seconds
+            // before aces.exe or aces_BE.exe appears. Keep Home in RUNNING
+            // during that hand-off so the user cannot double-launch the game.
+            _gameLaunchPendingUntilUtc = DateTime.UtcNow.AddSeconds(45);
+            UpdateVisualStates();
         }
         catch (Exception ex)
         {
+            _gameLaunchPendingUntilUtc = DateTime.MinValue;
+            UpdateVisualStates();
             MessageBox.Show(
                 ex.Message,
                 T("Dialog.StartGameFailed"),
@@ -6589,6 +6668,8 @@ render{
 
     private void ApplyVrMode()
     {
+        string? writeWarning = GetGameConfigWriteWarning();
+        if (writeWarning != null) { ShowWarning(writeWarning); return; }
         string? warning = GetVrWarning();
 
         if (warning != null)
@@ -6603,9 +6684,8 @@ render{
             return;
         }
 
-        string originalConfig = File.ReadAllText(_configBlkPath);
         bool applyControls = HasSelectedControlsProfile(AppliedMode.VR);
-        string? originalMachine = applyControls ? File.ReadAllText(_machineBlkPath) : null;
+        if (!TryReadProfileTargets(applyControls, out string originalConfig, out string? originalMachine)) return;
 
         bool graphicsApplied;
         if (_customVrEnabled)
@@ -6673,9 +6753,13 @@ render{
             return;
         }
 
-        if (_launchBusy || GameIsRunning()) { ShowWarning("Close War Thunder and finish any update before selecting another installation."); return; }
-        var channel = WarThunderServerConfig.Detect(File.ReadAllText(configPath));
-        try { folder = ValidateGameFolder(folder, channel); }
+        if (_launchBusy || IsWarThunderRunningOrStarting()) { ShowWarning("Close War Thunder and finish any update before selecting another installation."); return; }
+        GameServerChannel channel;
+        try
+        {
+            channel = WarThunderServerConfig.Detect(File.ReadAllText(configPath));
+            folder = ValidateGameFolder(folder, channel);
+        }
         catch (Exception ex) { ShowWarning(ex.Message); return; }
         _installations.SetBoth(folder);
         _useTestServer = channel == GameServerChannel.Test;
@@ -6688,6 +6772,8 @@ render{
 
     private void ApplyMonitorMode()
     {
+        string? writeWarning = GetGameConfigWriteWarning();
+        if (writeWarning != null) { ShowWarning(writeWarning); return; }
         string? warning = GetMonitorWarning();
 
         if (warning != null)
@@ -6702,9 +6788,8 @@ render{
             return;
         }
 
-        string originalConfig = File.ReadAllText(_configBlkPath);
         bool applyControls = HasSelectedControlsProfile(AppliedMode.Monitor);
-        string? originalMachine = applyControls ? File.ReadAllText(_machineBlkPath) : null;
+        if (!TryReadProfileTargets(applyControls, out string originalConfig, out string? originalMachine)) return;
 
         if (!ApplyBlkFile(_desktopBlkPath, AppliedMode.Monitor) ||
             (applyControls && !ApplyControlsProfile(desktopControlsPath, "Desktop")))
@@ -6766,14 +6851,41 @@ render{
         }
     }
 
+    private string? GetGameConfigWriteWarning(bool duringLaunch = false)
+    {
+        if (_launchBusy && !duringLaunch) return T("Game.UpdateInProgress");
+        if (IsWarThunderRunningOrStarting()) return T("Warning.CloseGameBeforeServer");
+        string? root = Path.GetDirectoryName(_configBlkPath);
+        if (!string.IsNullOrWhiteSpace(root) && LauncherRunningIn(root))
+            return T("Warning.CloseLauncherBeforeServer");
+        return null;
+    }
+
+    private bool TryReadProfileTargets(bool applyControls, out string config, out string? machine)
+    {
+        config = string.Empty;
+        machine = null;
+        try
+        {
+            config = File.ReadAllText(_configBlkPath);
+            if (applyControls) machine = File.ReadAllText(_machineBlkPath);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            ShowWarning(ex.Message);
+            return false;
+        }
+    }
+
     private void RestoreProfileTargets(string originalConfig, string? originalMachine)
     {
         try
         {
-            File.WriteAllText(_configBlkPath, originalConfig);
+            AtomicFile.WriteText(_configBlkPath, originalConfig);
             if (originalMachine != null)
             {
-                File.WriteAllText(_machineBlkPath, originalMachine);
+                AtomicFile.WriteText(_machineBlkPath, originalMachine);
             }
 
             _lastAppliedMode = AppliedMode.None;
@@ -6892,7 +7004,7 @@ render{
                 return false;
             }
 
-            File.Copy(sourcePath, _configBlkPath, true);
+            AtomicFile.WriteText(_configBlkPath, File.ReadAllText(sourcePath));
             if (!ApplyGraphicsApiToConfig(mode))
             {
                 return false;
@@ -6936,7 +7048,7 @@ render{
                 return false;
             }
 
-            File.WriteAllText(_configBlkPath, blkContent);
+            AtomicFile.WriteText(_configBlkPath, blkContent);
             if (!ApplyGraphicsApiToConfig(mode))
             {
                 return false;
@@ -7010,15 +7122,16 @@ render{
     private void UpdateVisualStates()
     {
         RefreshControlProfileFooter();
-        _lastKnownGameRunning = IsWarThunderRunning();
+        _lastKnownGameRunning = IsWarThunderRunningOrStarting();
         _aviationHome?.SetState(
             _lastAppliedMode == AppliedMode.Monitor,
             _lastAppliedMode == AppliedMode.VR,
             _neckAssistForm?.AssistanceEnabled ?? IsNeckAssistSavedEnabled(),
             _hiddenKeybindsForm?.AssistantEnabled ?? IsKeyBindAssistantSavedEnabled(),
             SelectedGameServerChannel,
-            IsWarThunderExeSelected() && !_launchBusy,
-            _lastKnownGameRunning);
+            IsWarThunderExeSelected(),
+            _lastKnownGameRunning,
+            _launchBusy);
         _aviationHome?.SetVTrimState(_vtrimForm?.OutputEnabled == true);
         _aviationHome?.SetGameUpdateAvailable(_selectedGameUpdateAvailable);
 
@@ -7130,7 +7243,7 @@ render{
 
             bool canPlay = IsWarThunderExeSelected();
             _mainCanvas.SetImage("PlayButton", canPlay ? _playOn : _playOff);
-            _mainCanvas.SetItemClickAction("PlayButton", canPlay ? LaunchWarThunder : null);
+            _mainCanvas.SetItemClickAction("PlayButton", canPlay ? HomePrimaryAction : null);
         }
 
         if (_settingsCanvas != null)
@@ -7990,6 +8103,20 @@ render{
 
     private async Task CheckForUpdatesAsync(bool interactive)
     {
+        if (_updateCheckInProgress) return;
+        if (IsWarThunderRunningOrStarting())
+        {
+            _updateDeferredForGame = true;
+            _nextAutomaticUpdateCheckUtc = DateTime.MaxValue;
+            if (interactive)
+                MessageBox.Show(this, "The app will check for updates after War Thunder closes.",
+                    T("Update.Title"), MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        _updateCheckInProgress = true;
+        _updateDeferredForGame = false;
+        _nextAutomaticUpdateCheckUtc = DateTime.UtcNow.AddHours(6);
         try
         {
             using HttpClient client = new HttpClient
@@ -8008,31 +8135,33 @@ render{
                 : GitHubReleasesUrl;
 
             string? updatePackageUrl = null;
+            string? updatePackageDigest = null;
             if (release.TryGetProperty("assets", out JsonElement assetsElement) &&
                 assetsElement.ValueKind == JsonValueKind.Array)
             {
-                updatePackageUrl = assetsElement
+                var updatePackage = assetsElement
                     .EnumerateArray()
                     .Select(asset => new
                     {
                         Name = asset.TryGetProperty("name", out JsonElement nameElement) ? nameElement.GetString() ?? "" : "",
-                        Url = asset.TryGetProperty("browser_download_url", out JsonElement downloadElement) ? downloadElement.GetString() : null
+                        Url = asset.TryGetProperty("browser_download_url", out JsonElement downloadElement) ? downloadElement.GetString() : null,
+                        Digest = asset.TryGetProperty("digest", out JsonElement digestElement) ? digestElement.GetString() : null
                     })
-                    .Where(asset => asset.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(asset.Url))
-                    .OrderByDescending(asset => asset.Name.Contains("WTVRSettingsAssistant", StringComparison.OrdinalIgnoreCase))
-                    .Select(asset => asset.Url)
+                    .Where(asset => asset.Name.StartsWith("WTVRSettingsAssistant", StringComparison.OrdinalIgnoreCase) &&
+                        asset.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(asset.Url))
+                    .OrderByDescending(asset => asset.Name.Equals($"WTVRSettingsAssistant-{tag}.zip", StringComparison.OrdinalIgnoreCase))
                     .FirstOrDefault();
+                updatePackageUrl = updatePackage?.Url;
+                updatePackageDigest = updatePackage?.Digest;
             }
 
             if (!Version.TryParse(CurrentVersion, out Version? current) ||
-                ParseReleaseVersion(tag) is not Version latest)
+                AppUpdateVersion.ParseReleaseVersion(tag) is not Version latest)
             {
                 throw new InvalidOperationException("GitHub returned an unrecognized version number.");
             }
 
-            Version currentLine = new(current.Major, current.Minor);
-            Version latestLine = new(latest.Major, latest.Minor);
-            bool updateAvailable = latestLine > currentLine;
+            bool updateAvailable = AppUpdateVersion.IsNewer(current, latest);
             _latestReleaseUrl = releaseUrl;
 
             if (_mainCanvas != null)
@@ -8040,19 +8169,12 @@ render{
                 _mainCanvas.SetImage("UpdateButton", updateAvailable ? _updateYellow : _updateGreen);
             }
 
-            if (updateAvailable && (interactive || !_updatePromptShown))
+            if (updateAvailable)
             {
-                _updatePromptShown = true;
-                DialogResult answer = MessageBox.Show(
-                    this,
-                    string.Format(CultureInfo.CurrentCulture, T("Update.Available"), tag, CurrentVersion),
-                    T("Update.Title"),
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Information);
-
-                if (answer == DialogResult.Yes)
+                if (string.IsNullOrWhiteSpace(updatePackageUrl))
                 {
-                    if (string.IsNullOrWhiteSpace(updatePackageUrl))
+                    _nextAutomaticUpdateCheckUtc = DateTime.UtcNow.AddMinutes(30);
+                    if (interactive)
                     {
                         MessageBox.Show(
                             this,
@@ -8062,10 +8184,15 @@ render{
                             MessageBoxIcon.Information);
                         OpenLatestReleasePage();
                     }
-                    else
-                    {
-                        await DownloadAndInstallUpdateAsync(updatePackageUrl, latest);
-                    }
+                }
+                else if (IsWarThunderRunningOrStarting())
+                {
+                    _updateDeferredForGame = true;
+                    _nextAutomaticUpdateCheckUtc = DateTime.MaxValue;
+                }
+                else if (!await DownloadAndInstallUpdateAsync(updatePackageUrl, updatePackageDigest, latest, interactive) && !_updateDeferredForGame)
+                {
+                    _nextAutomaticUpdateCheckUtc = DateTime.UtcNow.AddMinutes(30);
                 }
             }
             else if (interactive)
@@ -8080,6 +8207,7 @@ render{
         }
         catch (Exception ex)
         {
+            _nextAutomaticUpdateCheckUtc = DateTime.UtcNow.AddMinutes(30);
             if (interactive)
             {
                 MessageBox.Show(
@@ -8090,26 +8218,33 @@ render{
                     MessageBoxIcon.Warning);
             }
         }
+        finally
+        {
+            _updateCheckInProgress = false;
+        }
     }
 
-    private static Version? ParseReleaseVersion(string tag)
-    {
-        string normalized = tag.Trim().TrimStart('v', 'V');
-        int prereleaseSeparator = normalized.IndexOf('-');
-        if (prereleaseSeparator >= 0) normalized = normalized[..prereleaseSeparator];
-        return Version.TryParse(normalized, out Version? version) ? version : null;
-    }
-
-    private async Task DownloadAndInstallUpdateAsync(string packageUrl, Version latestVersion)
+    private async Task<bool> DownloadAndInstallUpdateAsync(string packageUrl, string? expectedDigest,
+        Version latestVersion, bool interactive)
     {
         string? temporaryRoot = null;
 
         try
         {
             if (!Uri.TryCreate(packageUrl, UriKind.Absolute, out Uri? packageUri) ||
-                !packageUri.Host.EndsWith("github.com", StringComparison.OrdinalIgnoreCase))
+                packageUri.Scheme != Uri.UriSchemeHttps ||
+                !string.Equals(packageUri.Host, "github.com", StringComparison.OrdinalIgnoreCase) ||
+                !packageUri.AbsolutePath.StartsWith(
+                    "/theartofvalio-cmyk/WTVRSettingsAssistant/releases/download/", StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidOperationException("GitHub returned an invalid update-package address.");
+            }
+
+            if (IsWarThunderRunningOrStarting())
+            {
+                _updateDeferredForGame = true;
+                _nextAutomaticUpdateCheckUtc = DateTime.MaxValue;
+                return false;
             }
 
             UseWaitCursor = true;
@@ -8131,6 +8266,17 @@ render{
                 await source.CopyToAsync(destination);
             }
 
+            if (!string.IsNullOrWhiteSpace(expectedDigest))
+            {
+                if (!expectedDigest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase) ||
+                    expectedDigest.Length != 71)
+                    throw new InvalidDataException("GitHub returned an invalid update checksum.");
+                using FileStream packageStream = File.OpenRead(zipPath);
+                string actualDigest = Convert.ToHexString(SHA256.HashData(packageStream));
+                if (!string.Equals(actualDigest, expectedDigest[7..], StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("The downloaded update does not match GitHub's checksum.");
+            }
+
             ZipFile.ExtractToDirectory(zipPath, extractPath, overwriteFiles: true);
 
             string executableName = UpdateExecutableName;
@@ -8142,6 +8288,21 @@ render{
             if (packagedExecutable == null)
             {
                 throw new InvalidDataException($"The update package does not contain {executableName}.");
+            }
+
+            string? packagedVersionText = FileVersionInfo.GetVersionInfo(packagedExecutable).FileVersion;
+            if (packagedVersionText is null ||
+                AppUpdateVersion.ParseReleaseVersion(packagedVersionText) is not Version packagedVersion ||
+                !AppUpdateVersion.IsSameRelease(packagedVersion, latestVersion))
+            {
+                throw new InvalidDataException("The update package version does not match the GitHub release.");
+            }
+
+            if (IsWarThunderRunningOrStarting())
+            {
+                _updateDeferredForGame = true;
+                _nextAutomaticUpdateCheckUtc = DateTime.MaxValue;
+                return false;
             }
 
             string payloadRoot = Path.GetDirectoryName(packagedExecutable)!;
@@ -8176,24 +8337,19 @@ render{
                 throw new InvalidOperationException("The update helper could not be started.");
             }
 
-            MessageBox.Show(
-                this,
-                string.Format(CultureInfo.CurrentCulture, T("Update.Ready"), latestVersion),
-                T("Update.ReadyTitle"),
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
-
             temporaryRoot = null; // The updater owns cleanup after this point.
             Application.Exit();
+            return true;
         }
         catch (Exception ex)
         {
-            MessageBox.Show(
-                this,
-                "The update could not be installed. No application files were changed.\n\n" + ex.Message,
-                "Update failed",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Warning);
+            if (interactive)
+                MessageBox.Show(this, "The update could not be installed. No application files were changed.\n\n" + ex.Message,
+                    "Update failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            else
+                _trayIcon?.ShowBalloonTip(5000, T("Update.Title"),
+                    string.Format(CultureInfo.CurrentCulture, T("Update.CheckFailed"), ex.Message), ToolTipIcon.Warning);
+            return false;
         }
         finally
         {
@@ -8228,74 +8384,129 @@ param(
 $ErrorActionPreference = 'Stop'
 Wait-Process -Id $ProcessId -ErrorAction SilentlyContinue
 
-$preservedFolders = @('Settings', 'GraphicSettings', 'ControlSettings', 'Diagnostics')
-$backupRoot = Join-Path $TemporaryRoot 'backup'
-$replacedFiles = New-Object System.Collections.Generic.List[string]
-$files = Get-ChildItem -LiteralPath $PayloadRoot -Recurse -File
+# These locations contain user-owned state and survive every application update.
+$preservedFolders = @('Settings', 'GraphicSettings', 'ControlSettings', 'Diagnostics', 'CustomThemes')
+$preservedRootFiles = @('installed.flag')
+$legacyFiles = @(
+    'WTVRSettingsAssistant.deps.json',
+    'WTVRSettingsAssistant.dll',
+    'WTVRSettingsAssistant.pdb',
+    'WTVRSettingsAssistant.runtimeconfig.json',
+    'Microsoft.Web.WebView2.Wpf.dll',
+    'Microsoft.Web.WebView2.Core.xml',
+    'Microsoft.Web.WebView2.WinForms.xml',
+    'Microsoft.Web.WebView2.Wpf.xml',
+    'NeckAssist/OpenXR/LICENSE-XRNeckSafer.txt',
+    'NeckAssist/OpenXR/XR_APILAYER_NOVENDOR_XRNeckSafer.dll',
+    'NeckAssist/OpenXR/XR_APILAYER_NOVENDOR_XRNeckSafer.json'
+)
+$backupRoot = Join-Path $TemporaryRoot 'rollback\old-app-files'
+New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
+$packageFiles = @()
+$backedUp = @()
+
+function Is-UserData([string]$relative) {
+    $top = ($relative -split '[\\/]', 2)[0]
+    return ($preservedFolders -contains $top) -or ($preservedRootFiles -contains $relative)
+}
+
+function Check-RelativePath([string]$relative) {
+    if ([IO.Path]::IsPathRooted($relative) -or
+        (($relative -split '[\\/]') | Where-Object { $_ -eq '..' -or $_ -eq '.' }).Count -gt 0) {
+        throw "Unsafe update file path: $relative"
+    }
+}
+
+function Backup-AppFile([string]$relative) {
+    $source = Join-Path $InstallRoot $relative
+    if (Test-Path -LiteralPath $source -PathType Container) {
+        throw "A user folder conflicts with an application file: $relative"
+    }
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { return }
+    $destination = Join-Path $backupRoot $relative
+    New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+    Copy-Item -LiteralPath $source -Destination $destination -Force -ErrorAction Stop
+    $script:backedUp += $relative
+}
+
 try {
-    foreach ($file in $files) {
-        $relativePath = $file.FullName.Substring($PayloadRoot.Length).TrimStart('\', '/')
-        $topFolder = ($relativePath -split '[\\/]', 2)[0]
-        if ($preservedFolders -contains $topFolder) {
-            continue
+    # The package declares the files it owns. Only those files and exact known
+    # 1.5/2.0 leftovers may be replaced or removed. Unknown user files survive.
+    $packageFiles = @(Get-ChildItem -LiteralPath $PayloadRoot -Recurse -File | ForEach-Object {
+        $relative = $_.FullName.Substring($PayloadRoot.Length).TrimStart('\', '/')
+        Check-RelativePath $relative
+        if (-not (Is-UserData $relative)) {
+            [pscustomobject]@{ Source = $_.FullName; Relative = $relative }
         }
+    })
+    $ownedPaths = @($packageFiles | ForEach-Object Relative) + $legacyFiles
+    foreach ($relative in ($ownedPaths | Select-Object -Unique)) {
+        Check-RelativePath $relative
+        Backup-AppFile $relative
+    }
 
-        $destination = Join-Path $InstallRoot $relativePath
-        $destinationFolder = Split-Path -Parent $destination
-        if ($destinationFolder) {
-            New-Item -ItemType Directory -Path $destinationFolder -Force | Out-Null
+    foreach ($relative in $legacyFiles) {
+        $oldPath = Join-Path $InstallRoot $relative
+        if (Test-Path -LiteralPath $oldPath -PathType Leaf) {
+            Remove-Item -LiteralPath $oldPath -Force -ErrorAction Stop
         }
-
-        if (Test-Path -LiteralPath $destination -PathType Leaf) {
-            $backupPath = Join-Path $backupRoot $relativePath
-            $backupFolder = Split-Path -Parent $backupPath
-            New-Item -ItemType Directory -Path $backupFolder -Force | Out-Null
-            Copy-Item -LiteralPath $destination -Destination $backupPath -Force
+    }
+    foreach ($relative in @('NeckAssist/OpenXR', 'NeckAssist')) {
+        $oldDirectory = Join-Path $InstallRoot $relative
+        if ((Test-Path -LiteralPath $oldDirectory -PathType Container) -and
+            -not @(Get-ChildItem -LiteralPath $oldDirectory -Force).Count) {
+            Remove-Item -LiteralPath $oldDirectory -Force -ErrorAction Stop
         }
+    }
 
+    foreach ($file in $packageFiles) {
+        $destination = Join-Path $InstallRoot $file.Relative
+        New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
         $copied = $false
         for ($attempt = 0; $attempt -lt 20 -and -not $copied; $attempt++) {
             try {
-                Copy-Item -LiteralPath $file.FullName -Destination $destination -Force
+                Copy-Item -LiteralPath $file.Source -Destination $destination -Force -ErrorAction Stop
                 $copied = $true
             }
-            catch {
-                Start-Sleep -Milliseconds 250
-            }
+            catch { Start-Sleep -Milliseconds 250 }
         }
-
-        if (-not $copied) {
-            throw "Could not replace $relativePath"
-        }
-
-        $replacedFiles.Add($relativePath)
+        if (-not $copied) { throw "Could not install $($file.Relative)" }
     }
 
     $executablePath = Join-Path $InstallRoot $ExecutableName
+    if (-not (Test-Path -LiteralPath $executablePath -PathType Leaf)) {
+        throw 'The updated executable was not installed.'
+    }
+
     Start-Process -FilePath $executablePath -WorkingDirectory $InstallRoot
     Remove-Item -LiteralPath $TemporaryRoot -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
 }
 catch {
-    foreach ($relativePath in $replacedFiles) {
-        $backupPath = Join-Path $backupRoot $relativePath
-        $destination = Join-Path $InstallRoot $relativePath
-        if (Test-Path -LiteralPath $backupPath -PathType Leaf) {
-            Copy-Item -LiteralPath $backupPath -Destination $destination -Force -ErrorAction SilentlyContinue
+    # Restore only files the updater owned. Unrecognized user files were never touched.
+    foreach ($file in $packageFiles) {
+        $destination = Join-Path $InstallRoot $file.Relative
+        if (Test-Path -LiteralPath $destination -PathType Leaf) {
+            Remove-Item -LiteralPath $destination -Force -ErrorAction SilentlyContinue
         }
     }
-
+    foreach ($relative in $backedUp) {
+        $source = Join-Path $backupRoot $relative
+        $destination = Join-Path $InstallRoot $relative
+        New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+        Copy-Item -LiteralPath $source -Destination $destination -Force -ErrorAction SilentlyContinue
+    }
     $executablePath = Join-Path $InstallRoot $ExecutableName
     if (Test-Path -LiteralPath $executablePath -PathType Leaf) {
         Start-Process -FilePath $executablePath -WorkingDirectory $InstallRoot
     }
-
     Add-Type -AssemblyName System.Windows.Forms
     [System.Windows.Forms.MessageBox]::Show(
-        "The update could not be completed and the previous files were restored.`n`n$($_.Exception.Message)",
+        "The update could not be completed and the previous application files were restored.`n`n$($_.Exception.Message)",
         'Update failed',
         [System.Windows.Forms.MessageBoxButtons]::OK,
         [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
+
 }
 """;
     }
@@ -8540,7 +8751,7 @@ catch {
         public CertificationPromptForm(Color bgColor, Color textColor, Func<float, FontStyle, Font> fontFactory)
         {
             AutoScaleMode = AutoScaleMode.None;
-            Text = "WT VR Settings Assistant";
+            Text = "War Thunder VR Assistant";
             StartPosition = FormStartPosition.Manual;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
@@ -9512,10 +9723,30 @@ catch {
 
     private void RefreshGameRunningVisualState()
     {
-        bool running = IsWarThunderRunning();
-        if (running == _lastKnownGameRunning) return;
+        bool wasRunning = _lastKnownGameRunning;
+        bool running = IsWarThunderRunningOrStarting();
+        if (running == wasRunning) return;
+
         UpdateVisualStates();
+
+        // Game/anti-cheat exit can update the local manifest. Refresh the selected
+        // branch immediately so RUNNING never falls back to a stale UPDATE/LAUNCH
+        // state after War Thunder closes.
+        if (wasRunning && !running && !IsDisposed && !_revisionCancellation.IsCancellationRequested)
+            _ = RefreshGameVersionStatusAsync();
     }
+
+    private bool IsWarThunderRunningOrStarting()
+    {
+        bool running = IsWarThunderRunning();
+        if (running)
+        {
+            _gameLaunchPendingUntilUtc = DateTime.MinValue;
+            return true;
+        }
+        return GameLaunchPending;
+    }
+
     private static bool IsWarThunderRunning()
     {
         Process[] aces = Process.GetProcessesByName("aces");
@@ -9637,18 +9868,20 @@ catch {
     {
         try
         {
-            if (!File.Exists(StateFilePath))
+            SavedState? state = null;
+            foreach (string candidate in new[] { StateFilePath, StateFilePath + ".bak" })
             {
-                return;
+                try
+                {
+                    if (!File.Exists(candidate)) continue;
+                    state = JsonSerializer.Deserialize<SavedState>(File.ReadAllText(candidate));
+                    if (state is not null) break;
+                }
+                catch (JsonException) { }
+                catch (IOException) { }
             }
 
-            string json = File.ReadAllText(StateFilePath);
-            SavedState? state = JsonSerializer.Deserialize<SavedState>(json);
-
-            if (state == null)
-            {
-                return;
-            }
+            if (state == null) return;
 
             _configBlkPath = state.ConfigBlkPath ?? "";
             _desktopBlkPath = state.DesktopBlkPath ?? "";
@@ -9682,6 +9915,7 @@ catch {
             _startMinimizedToTray = state.StartMinimizedToTray;
             _useTestServer = state.UseTestServer;
             _languageCode = AppText.Normalize(state.LanguageCode);
+            _uiTheme = AppThemeAssets.NormalizeThemeName(state.UiTheme);
 
             Rectangle work = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080);
             Size requested = state.WindowLayoutRevision >= 183 &&
@@ -9735,6 +9969,7 @@ catch {
                 StartMinimizedToTray = _startMinimizedToTray,
                 UseTestServer = _useTestServer,
                 LanguageCode = _languageCode,
+                UiTheme = _uiTheme,
                 WindowWidth = ClientSize.Width,
                 WindowHeight = ClientSize.Height,
                 WindowLayoutRevision = 205
@@ -9747,7 +9982,7 @@ catch {
                     WriteIndented = true
                 });
 
-            AtomicFile.WriteText(StateFilePath, json);
+            AtomicFile.WriteTextWithBackup(StateFilePath, json);
         }
         catch
         {
@@ -9755,8 +9990,5 @@ catch {
         }
     }
 }
-
-
-
 
 

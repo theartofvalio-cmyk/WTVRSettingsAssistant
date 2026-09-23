@@ -10,22 +10,20 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <AssemblyName>VTrim.Embedded</AssemblyName>
     <RootNamespace>HOTASTrimUtility</RootNamespace>
-    <Version>2.0.6</Version>
+    <Version>2.1</Version>
+    <AssemblyVersion>2.1.0.0</AssemblyVersion>
+    <FileVersion>2.1.0.0</FileVersion>
     <DefineConstants>$(DefineConstants);VTRIM_EMBEDDED</DefineConstants>
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="LateralAssistController.cs" />
-    <EmbeddedResource Include="Assets/Nations/*.png" />
+    <EmbeddedResource Include="Assets/**/*.png" />
     <Compile Include="ScrollPagePanel.cs" />
-    <Compile Include="AircraftDatabase.cs;Form1.AircraftProfiles.cs;Form1.ProfileCards.cs;Form1.GlobalAxes.cs" />
-    <Compile Include="Form1.cs;Form1.Curves.cs;Form1.Instructor.cs;Form1.VirtualOutput.cs;Form1.Embedded.cs;VirtualOutput.cs;AxisResponse.cs;InstructorController.cs;NativeVJoy.cs;AircraftIcons.cs;GameWindow.cs;VJoySetup.cs;StoreTrimController.cs;WarThunderTelemetry.cs" />
+    <Compile Include="AircraftDatabase.cs;Form1.AircraftProfiles.cs;Form1.ProfileCards.cs;Form1.GlobalAxes.cs;Form1.AircraftControlEditor.cs" />
+    <Compile Include="Form1.cs;VTrimTranslations.cs;VTrimTranslations.Release21.cs;Form1.Curves.cs;Form1.Instructor.cs;Form1.VirtualOutput.cs;Form1.Embedded.cs;VirtualOutput.cs;AxisResponse.cs;InstructorController.cs;NativeVJoy.cs;VJoyNativeResolver.cs;AircraftIcons.cs;GameWindow.cs;VJoySetup.cs;StoreTrimController.cs;WarThunderTelemetry.cs;VTrimSelfTest.cs;XInputGamepad.cs" />
     <PackageReference Include="Vortice.DirectInput" Version="3.8.3" />
-    <Content Include="Native/x86/vJoyInterface.dll">
-      <Link>vJoyInterface.dll</Link><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory><CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
-    </Content>
   </ItemGroup>
   <Target Name="RemoveNativeVJoyCompileReference" AfterTargets="ResolvePackageAssets">
     <ItemGroup>

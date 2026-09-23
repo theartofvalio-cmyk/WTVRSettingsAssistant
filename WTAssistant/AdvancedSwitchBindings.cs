@@ -101,7 +101,8 @@ internal static class WinMmJoystickReader
         {
             JoyCaps caps = new();
             bool haveCaps = joyGetDevCapsW(id, ref caps, Marshal.SizeOf<JoyCaps>()) == 0;
-            if (haveCaps && IsVirtualOutputJoystick(caps))
+            if (haveCaps && (IsVirtualOutputJoystick(caps) ||
+                (XInputController.AnyConnected && LooksLikeXInputName(caps.ProductName))))
                 continue;
 
             JoyInfoEx info = new() { Size = Marshal.SizeOf<JoyInfoEx>(), Flags = JoyReturnButtons };
@@ -110,11 +111,24 @@ internal static class WinMmJoystickReader
                 ? caps.ProductName.Trim() : $"Joystick {id + 1}";
             result.Add(new PhysicalJoystick(id, name, info.Buttons, true));
         }
+        for (int index = 0; index < 4; index++)
+        {
+            if (!XInputController.TryGetButtonMask(index, out uint mask)) continue;
+            result.Add(new PhysicalJoystick(1000 + index, $"Xbox / XInput Controller {index + 1}", mask, true));
+        }
         return result;
     }
 
     public static PhysicalJoystick? Read(int id, string fallbackName)
     {
+        if (id is >= 1000 and <= 1003)
+        {
+            int index = id - 1000;
+            return XInputController.TryGetButtonMask(index, out uint xmask)
+                ? new PhysicalJoystick(id, $"Xbox / XInput Controller {index + 1}", xmask, true)
+                : null;
+        }
+
         JoyInfoEx info = new() { Size = Marshal.SizeOf<JoyInfoEx>(), Flags = JoyReturnButtons };
         if (joyGetPosEx(id, ref info) != 0) return null;
         JoyCaps caps = new();
@@ -126,6 +140,12 @@ internal static class WinMmJoystickReader
             ? caps.ProductName.Trim() : fallbackName;
         return new PhysicalJoystick(id, name, info.Buttons, true);
     }
+
+    private static bool LooksLikeXInputName(string? name) =>
+        !string.IsNullOrWhiteSpace(name) &&
+        (name.Contains("xbox", StringComparison.OrdinalIgnoreCase) ||
+         name.Contains("xinput", StringComparison.OrdinalIgnoreCase) ||
+         name.Contains("gamepad for windows", StringComparison.OrdinalIgnoreCase));
 
     private static bool IsVirtualOutputJoystick(JoyCaps caps) =>
         IsVirtualOutputJoystickName(caps.ProductName) ||
@@ -250,6 +270,18 @@ internal sealed partial class AdvancedSwitchService : IDisposable
     {
         _path = settingsPath;
         Settings = Load(settingsPath);
+        Settings.Switches ??= new List<SwitchDefinition>();
+        foreach (SwitchDefinition definition in Settings.Switches)
+        {
+            definition.States ??= new List<SwitchStateDefinition>();
+            definition.AdvancedFlaps ??= new AdvancedFlapsSettings();
+            foreach (SwitchStateDefinition state in definition.States)
+            {
+                state.Sequence ??= new List<SwitchMacroStep>();
+                state.Gesture ??= new List<SwitchGestureStep>();
+                state.Conditions ??= new List<InputCondition>();
+            }
+        }
         Settings.PulseDurationMs = Math.Clamp(Settings.PulseDurationMs, 50, 150);
         Settings.DebounceMs = Math.Clamp(Settings.DebounceMs, 20, 50);
         _output = output;
@@ -261,7 +293,7 @@ internal sealed partial class AdvancedSwitchService : IDisposable
         {
             definition.AdvancedFlaps.Enabled = false;
             definition.Enabled = false;
-            LastStatus = "Legacy flap automation removed. Configure custom action sequences, then enable the switch.";
+            LastStatus = AppText.T(LanguageCode, "Switch.LegacyFlapsRemoved");
         }
         MigrateLegacyOutputButtons();
     }
@@ -299,7 +331,7 @@ internal sealed partial class AdvancedSwitchService : IDisposable
     public void Save()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-        File.WriteAllText(_path, JsonSerializer.Serialize(Settings, new JsonSerializerOptions { WriteIndented = true }));
+        AtomicFile.WriteTextWithBackup(_path, JsonSerializer.Serialize(Settings, new JsonSerializerOptions { WriteIndented = true }));
     }
 
     public void SetEnabled(bool enabled)
@@ -545,11 +577,18 @@ internal sealed partial class AdvancedSwitchService : IDisposable
 
     private static AdvancedSwitchSettings Load(string path)
     {
-        try
+        foreach (string candidate in new[] { path, path + ".bak" })
         {
-            if (File.Exists(path)) return JsonSerializer.Deserialize<AdvancedSwitchSettings>(File.ReadAllText(path)) ?? new();
+            try
+            {
+                if (!File.Exists(candidate)) continue;
+                AdvancedSwitchSettings? settings = JsonSerializer.Deserialize<AdvancedSwitchSettings>(File.ReadAllText(candidate));
+                if (settings is not null) return settings;
+            }
+            catch (JsonException) { }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
         }
-        catch { }
         return new();
     }
 
@@ -565,6 +604,9 @@ internal sealed partial class AdvancedSwitchService : IDisposable
 
 internal sealed class AdvancedSwitchManagerForm : Form
 {
+    private float _lastVisualScale;
+    private Font? _cellFont;
+    private Font? _headerFont;
     private readonly AdvancedSwitchService _service;
     private readonly DataGridView _grid = new();
     private readonly Label _status = new();
@@ -579,11 +621,15 @@ internal sealed class AdvancedSwitchManagerForm : Form
         Text = T("Switch.AdvancedBindings");
         StartPosition = FormStartPosition.CenterParent;
         MinimumSize = new Size(1180, 760);
-        ClientSize = new Size(1220, 800);
-        AutoScaleMode = AutoScaleMode.None;
+        Rectangle workArea = Screen.FromPoint(Cursor.Position).WorkingArea;
+        ClientSize = new Size(
+            Math.Clamp((int)(workArea.Width * .72f), 1220, 1760),
+            Math.Clamp((int)(workArea.Height * .78f), 800, 1160));
+        AutoScaleMode = AutoScaleMode.Dpi;
         BackColor = IllustratedTheme.Background;
         ForeColor = IllustratedTheme.Ivory;
-        Font = new Font("Segoe UI", 13f, FontStyle.Regular);
+        Font = new Font("Segoe UI", 17f, FontStyle.Regular, GraphicsUnit.Pixel);
+        HandleCreated += (_, _) => IllustratedTheme.ApplyWindowChrome(this);
 
         Label title = L("ADVANCED SWITCH BINDINGS", 24, FontStyle.Bold); title.SetBounds(24, 16, 760, 48);
         Label hint = L("HOW IT WORKS:  1) Click ADD and add one row for each switch position.  2) Detect each row\'s physical condition.  3) Record the keyboard key or mouse button to tap when that position becomes active.", 11.5f, FontStyle.Regular);
@@ -599,7 +645,10 @@ internal sealed class AdvancedSwitchManagerForm : Form
 
         _grid.SetBounds(24, 212, 1172, 488); _grid.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
         _grid.BackgroundColor = Color.FromArgb(28, 31, 32); _grid.BorderStyle = BorderStyle.None; _grid.ReadOnly = true; _grid.AllowUserToAddRows = false; _grid.AllowUserToDeleteRows = false; _grid.RowHeadersVisible = false; _grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect; _grid.MultiSelect = false; _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
-        _grid.DefaultCellStyle.BackColor = Color.FromArgb(33, 36, 37); _grid.DefaultCellStyle.ForeColor = IllustratedTheme.Ivory; _grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(91, 74, 42); _grid.DefaultCellStyle.SelectionForeColor = Color.White; _grid.RowTemplate.Height = 36; _grid.ColumnHeadersHeight = 38; _grid.DefaultCellStyle.Font = new Font("Segoe UI", 12.5f); _grid.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI", 12f, FontStyle.Bold);
+        _grid.DefaultCellStyle.BackColor = Color.FromArgb(33, 36, 37); _grid.DefaultCellStyle.ForeColor = IllustratedTheme.Ivory; _grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(91, 74, 42); _grid.DefaultCellStyle.SelectionForeColor = Color.White; _grid.RowTemplate.Height = 44; _grid.ColumnHeadersHeight = 46;
+        _cellFont = new Font("Segoe UI", 17f, FontStyle.Regular, GraphicsUnit.Pixel);
+        _headerFont = new Font("Segoe UI", 17f, FontStyle.Bold, GraphicsUnit.Pixel);
+        _grid.DefaultCellStyle.Font = _cellFont; _grid.ColumnHeadersDefaultCellStyle.Font = _headerFont;
         _grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(25, 27, 28); _grid.ColumnHeadersDefaultCellStyle.ForeColor = IllustratedTheme.Gold; _grid.EnableHeadersVisualStyles = false;
         _grid.Columns.Add("Name", "SWITCH"); _grid.Columns.Add("Device", "DEVICE"); _grid.Columns.Add("Physical", "PHYSICAL BUTTON"); _grid.Columns.Add("Actions", "ACTIONS"); _grid.Columns.Add("Enabled", "STATUS");
         ApplyLanguage();
@@ -609,12 +658,13 @@ internal sealed class AdvancedSwitchManagerForm : Form
         Paint += (_, e) => IllustratedTheme.DrawFrame(e.Graphics, new Rectangle(8, 8, ClientSize.Width - 17, ClientSize.Height - 17), false);
         _service.StatusChanged += OnStatus;
         FormClosed += (_, _) => _service.StatusChanged -= OnStatus;
+        FormClosed += (_, _) => { _cellFont?.Dispose(); _headerFont?.Dispose(); };
 
         add.Click += (_, _) => AddDetectedSwitch();
         edit.Click += (_, _) => { if (Selected() is { } d) EditSwitch(d); };
         toggle.Click += (_, _) => { if (Selected() is { } d) { d.Enabled = !d.Enabled; _service.ResetRuntime(); _service.Save(); RefreshRows(); } };
         delete.Click += (_, _) => { if (Selected() is { } d && MessageBox.Show(this, string.Format(CultureInfo.CurrentCulture, T("Switch.DeletePrompt"), d.Name), T("Switch.AdvancedBindings"), MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes) { d.Enabled = false; _service.ResetRuntime(); _service.Settings.Switches.Remove(d); _service.Save(); RefreshRows(); } };
-        test.Click += (_, _) => { if (Selected() is { } d) using (var f = new SwitchTestForm(_service, d, _languageCode)) f.ShowDialog(this); };
+        test.Click += (_, _) => { if (Selected() is { } d) using (var f = new SwitchTestForm(_service, d, _languageCode) { Icon = Icon }) f.ShowDialog(this); };
         options.Click += (_, _) => ShowOptions();
         close.Click += (_, _) => Close();
         _grid.CellDoubleClick += (_, _) => { if (Selected() is { } d) EditSwitch(d); };
@@ -623,8 +673,23 @@ internal sealed class AdvancedSwitchManagerForm : Form
         {
             int w = Math.Max(1, ClientSize.Width);
             int h = Math.Max(1, ClientSize.Height);
-            float scale = Math.Clamp(Math.Min(w / 1220F, h / 800F), 0.88F, 1.30F);
+            float scale = Math.Clamp(Math.Min(w / 1220F, h / 800F), 1F, 1.45F);
             int S(float value) => Math.Max(1, (int)Math.Round(value * scale));
+            if (Math.Abs(scale - _lastVisualScale) > .02f)
+            {
+                _lastVisualScale = scale;
+                ResponsiveFonts.Set(title, 32f * scale, FontStyle.Bold, GraphicsUnit.Pixel);
+                ResponsiveFonts.Set(hint, 18f * scale, FontStyle.Regular, GraphicsUnit.Pixel);
+                ResponsiveFonts.Set(_status, 18f * scale, FontStyle.Regular, GraphicsUnit.Pixel);
+                foreach (Button button in new[] { add, edit, toggle, delete, test, options, close })
+                    ResponsiveFonts.Set(button, 18f * scale, FontStyle.Bold, GraphicsUnit.Pixel);
+                Font cell = new("Segoe UI", 17f * scale, FontStyle.Regular, GraphicsUnit.Pixel);
+                Font header = new("Segoe UI", 17f * scale, FontStyle.Bold, GraphicsUnit.Pixel);
+                Font? oldCell = _cellFont, oldHeader = _headerFont;
+                _grid.DefaultCellStyle.Font = cell; _grid.ColumnHeadersDefaultCellStyle.Font = header;
+                _cellFont = cell; _headerFont = header;
+                oldCell?.Dispose(); oldHeader?.Dispose();
+            }
             int margin = S(24);
             int full = Math.Max(S(600), w - margin * 2);
             title.SetBounds(margin, S(16), Math.Min(full, S(760)), S(48));
@@ -658,8 +723,9 @@ internal sealed class AdvancedSwitchManagerForm : Form
             _status.SetBounds(margin, h - S(84), full, statusHeight);
             int gridTop = S(212);
             _grid.SetBounds(margin, gridTop, full, Math.Max(S(260), _status.Top - S(16) - gridTop));
-            _grid.RowTemplate.Height = Math.Max(32, S(36));
-            _grid.ColumnHeadersHeight = Math.Max(34, S(38));
+            _grid.RowTemplate.Height = S(44);
+            foreach (DataGridViewRow row in _grid.Rows) row.Height = S(44);
+            _grid.ColumnHeadersHeight = S(46);
         }
         Resize += (_, _) => LayoutManager();
         Shown += (_, _) => LayoutManager();
@@ -674,7 +740,7 @@ internal sealed class AdvancedSwitchManagerForm : Form
             return;
         int output = detectedButton;
         SwitchDefinition definition = CreateActionSwitch($"VBtn{output} Toggle", detectedDevice, detectedButton, output, output, true);
-        using SwitchEditorForm editor = new(definition, _languageCode);
+        using SwitchEditorForm editor = new(definition, _languageCode) { Icon = Icon };
         if (editor.ShowDialog(this) == DialogResult.OK)
         {
             if (definition.Enabled && definition.AdvancedFlaps.Enabled && _service.Settings.Switches.Any(d => d.Enabled && d.AdvancedFlaps.Enabled))
@@ -706,7 +772,7 @@ internal sealed class AdvancedSwitchManagerForm : Form
             BackColor = IllustratedTheme.Background,
             ForeColor = IllustratedTheme.Ivory,
             Font = new Font("Segoe UI", 13f),
-            AutoScaleMode = AutoScaleMode.None
+            AutoScaleMode = AutoScaleMode.Dpi
         };
         Label message = L(prompt, 13.5f, FontStyle.Bold);
         message.SetBounds(30, 26, 620, 128);
@@ -893,7 +959,7 @@ internal sealed class AdvancedSwitchManagerForm : Form
 
     private void ShowOptions()
     {
-        using Form f = new() { Text = T("Switch.OptionsTitle"), StartPosition = FormStartPosition.CenterParent, ClientSize = new Size(520, 280), BackColor = IllustratedTheme.Background, ForeColor = IllustratedTheme.Ivory, Font = Font, AutoScaleMode = AutoScaleMode.None };
+        using Form f = new() { Text = T("Switch.OptionsTitle"), StartPosition = FormStartPosition.CenterParent, ClientSize = new Size(520, 280), BackColor = IllustratedTheme.Background, ForeColor = IllustratedTheme.Ivory, Font = Font, AutoScaleMode = AutoScaleMode.Dpi };
         Label p = L(T("Switch.PulseDuration"), 11, FontStyle.Bold); p.SetBounds(24, 28, 280, 30);
         NumericUpDown pulse = new() { Minimum = 50, Maximum = 150, Value = _service.Settings.PulseDurationMs, Bounds = new Rectangle(320, 28, 150, 32) };
         Label d = L(T("Switch.Debounce"), 11, FontStyle.Bold); d.SetBounds(24, 82, 280, 30);
@@ -934,6 +1000,9 @@ internal sealed class AdvancedSwitchManagerForm : Form
 
 internal sealed partial class SwitchEditorForm : Form
 {
+    private float _lastVisualScale;
+    private Font? _cellFont;
+    private Font? _headerFont;
     private readonly SwitchDefinition _definition;
     private readonly string _languageCode;
     private readonly TextBox _name = new();
@@ -954,11 +1023,15 @@ internal sealed partial class SwitchEditorForm : Form
         Text = T("Switch.Builder");
         StartPosition = FormStartPosition.CenterParent;
         MinimumSize = new Size(1120, 780);
-        ClientSize = new Size(1220, 820);
-        AutoScaleMode = AutoScaleMode.None;
+        Rectangle workArea = Screen.FromPoint(Cursor.Position).WorkingArea;
+        ClientSize = new Size(
+            Math.Clamp((int)(workArea.Width * .72f), 1220, 1760),
+            Math.Clamp((int)(workArea.Height * .78f), 820, 1180));
+        AutoScaleMode = AutoScaleMode.Dpi;
         BackColor = IllustratedTheme.Background;
         ForeColor = IllustratedTheme.Ivory;
-        Font = new Font("Segoe UI", 14f, FontStyle.Regular, GraphicsUnit.Pixel);
+        Font = new Font("Segoe UI", 17f, FontStyle.Regular, GraphicsUnit.Pixel);
+        HandleCreated += (_, _) => IllustratedTheme.ApplyWindowChrome(this);
 
         Label title = AdvancedSwitchManagerForm.L(T("Switch.Builder").ToUpperInvariant(), 22, FontStyle.Bold);
         title.SetBounds(24, 18, 760, 44);
@@ -1002,13 +1075,15 @@ internal sealed partial class SwitchEditorForm : Form
         _states.DefaultCellStyle.ForeColor = IllustratedTheme.Ivory;
         _states.DefaultCellStyle.SelectionBackColor = Color.FromArgb(92, 79, 53);
         _states.DefaultCellStyle.SelectionForeColor = Color.White;
-        _states.DefaultCellStyle.Font = new Font("Segoe UI", 13f, FontStyle.Regular, GraphicsUnit.Pixel);
-        _states.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI", 13f, FontStyle.Bold, GraphicsUnit.Pixel);
+        _cellFont = new Font("Segoe UI", 17f, FontStyle.Regular, GraphicsUnit.Pixel);
+        _headerFont = new Font("Segoe UI", 17f, FontStyle.Bold, GraphicsUnit.Pixel);
+        _states.DefaultCellStyle.Font = _cellFont;
+        _states.ColumnHeadersDefaultCellStyle.Font = _headerFont;
         _states.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(25, 27, 28);
         _states.ColumnHeadersDefaultCellStyle.ForeColor = IllustratedTheme.Gold;
         _states.EnableHeadersVisualStyles = false;
-        _states.RowTemplate.Height = 46;
-        _states.ColumnHeadersHeight = 44;
+        _states.RowTemplate.Height = 50;
+        _states.ColumnHeadersHeight = 48;
         _states.Columns.Add(new DataGridViewTextBoxColumn { Name = "State", HeaderText = T("Switch.State"), FillWeight = 18 });
         _states.Columns.Add(new DataGridViewTextBoxColumn { Name = "Conditions", HeaderText = T("Switch.PhysicalCondition"), FillWeight = 34 });
         var kindColumn = new DataGridViewComboBoxColumn { Name = "Kind", HeaderText = T("Switch.ActionType"), FillWeight = 15, FlatStyle = FlatStyle.Flat };
@@ -1052,7 +1127,7 @@ internal sealed partial class SwitchEditorForm : Form
         recordMouse.Click += (_, _) =>
         {
             if (_states.CurrentRow?.Tag is SwitchStateDefinition s && s.Sequence.Count > 0)
-            { MessageBox.Show(this, "This row uses a keyboard sequence. Add a separate mouse row."); return; }
+            { MessageBox.Show(this, T("Switch.SequenceKeyboardOnly"), T("Switch.SequenceTitle"), MessageBoxButtons.OK, MessageBoxIcon.Information); return; }
             RecordSelectedMouse();
         };
         save.Click += (_, _) => { if (Commit()) DialogResult = DialogResult.OK; };
@@ -1065,32 +1140,63 @@ internal sealed partial class SwitchEditorForm : Form
         Shown += (_, _) => { LayoutEditor(title, guide, nameL, devL, buttons); _liveTimer.Start(); };
         FormClosed += (_, _) => _liveTimer.Stop();
         _liveTimer.Tick += (_, _) => UpdateLiveInput();
+        FormClosed += (_, _) => { _cellFont?.Dispose(); _headerFont?.Dispose(); };
     }
 
     private void LayoutEditor(Label title, Label guide, Label nameL, Label devL, Button[] buttons)
     {
         int w = Math.Max(1120, ClientSize.Width);
         int h = Math.Max(780, ClientSize.Height);
-        int margin = 24;
+        float scale = Math.Clamp(Math.Min(w / 1220f, h / 820f), 1f, 1.45f);
+        int S(float value) => (int)Math.Round(value * scale);
+        if (Math.Abs(scale - _lastVisualScale) > .02f)
+        {
+            _lastVisualScale = scale;
+            ResponsiveFonts.Set(title, 29f * scale, FontStyle.Bold, GraphicsUnit.Pixel);
+            ResponsiveFonts.Set(guide, 18f * scale, FontStyle.Regular, GraphicsUnit.Pixel);
+            ResponsiveFonts.Set(nameL, 17f * scale, FontStyle.Bold, GraphicsUnit.Pixel);
+            ResponsiveFonts.Set(devL, 17f * scale, FontStyle.Bold, GraphicsUnit.Pixel);
+            ResponsiveFonts.Set(_name, 17f * scale, FontStyle.Regular, GraphicsUnit.Pixel);
+            ResponsiveFonts.Set(_device, 17f * scale, FontStyle.Regular, GraphicsUnit.Pixel);
+            ResponsiveFonts.Set(_enabled, 18f * scale, FontStyle.Bold, GraphicsUnit.Pixel);
+            ResponsiveFonts.Set(_live, 18f * scale, FontStyle.Regular, GraphicsUnit.Pixel);
+            ResponsiveFonts.Set(_recordAdvanced, 18f * scale, FontStyle.Bold, GraphicsUnit.Pixel);
+            ResponsiveFonts.Set(_flapsSetup, 18f * scale, FontStyle.Bold, GraphicsUnit.Pixel);
+            foreach (Button button in buttons)
+                ResponsiveFonts.Set(button, 18f * scale, FontStyle.Bold, GraphicsUnit.Pixel);
+            Font cell = new("Segoe UI", 17f * scale, FontStyle.Regular, GraphicsUnit.Pixel);
+            Font header = new("Segoe UI", 17f * scale, FontStyle.Bold, GraphicsUnit.Pixel);
+            Font? oldCell = _cellFont, oldHeader = _headerFont;
+            _states.DefaultCellStyle.Font = cell;
+            _states.ColumnHeadersDefaultCellStyle.Font = header;
+            _cellFont = cell; _headerFont = header;
+            oldCell?.Dispose(); oldHeader?.Dispose();
+        }
+        int margin = S(24);
         int full = w - margin * 2;
-        title.SetBounds(margin, 18, Math.Min(760, full), 44);
-        guide.SetBounds(margin, 66, full, 72);
-        nameL.SetBounds(margin, 148, 130, 32);
-        _name.SetBounds(170, 146, Math.Min(330, full / 3), 36);
-        devL.SetBounds(Math.Max(520, _name.Right + 28), 148, 170, 32);
-        _device.SetBounds(devL.Right + 12, 146, Math.Max(280, w - devL.Right - 210), 36);
-        _enabled.SetBounds(w - 158, 146, 132, 36);
-        int buttonY = h - 86;
-        _live.SetBounds(margin, buttonY - 56, full, 44);
-        _recordAdvanced.SetBounds(margin, 188, 210, 32);
-        _flapsSetup.SetBounds(margin + 225, 188, 220, 32);
-        _states.SetBounds(margin, 230, full, Math.Max(240, _live.Top - 18 - 230));
+        title.SetBounds(margin, S(18), Math.Min(S(760), full), S(44));
+        guide.SetBounds(margin, S(66), full, S(72));
+        nameL.SetBounds(margin, S(148), S(130), S(38));
+        _name.SetBounds(S(170), S(146), Math.Min(S(330), full / 3), S(38));
+        devL.SetBounds(Math.Max(S(520), _name.Right + S(28)), S(148), S(170), S(38));
+        _device.SetBounds(devL.Right + S(12), S(146), Math.Max(S(280), w - devL.Right - S(210)), S(38));
+        _enabled.SetBounds(w - S(158), S(146), S(132), S(38));
+        int buttonY = h - S(86);
+        _live.SetBounds(margin, buttonY - S(56), full, S(44));
+        _recordAdvanced.SetBounds(margin, S(188), S(210), S(38));
+        _flapsSetup.SetBounds(margin + S(225), S(188), S(220), S(38));
+        int gridTop = S(238);
+        _states.SetBounds(margin, gridTop, full, Math.Max(S(240), _live.Top - S(18) - gridTop));
+        _states.RowTemplate.Height = S(50);
+        foreach (DataGridViewRow row in _states.Rows) row.Height = S(50);
+        _states.ColumnHeadersHeight = S(48);
         int x = margin;
-        int buttonWidth = (full - (buttons.Length - 1) * 8) / buttons.Length;
+        int gap = S(8);
+        int buttonWidth = (full - (buttons.Length - 1) * gap) / buttons.Length;
         for (int i = 0; i < buttons.Length; i++)
         {
-            buttons[i].SetBounds(x, buttonY, buttonWidth, 48);
-            x += buttonWidth + 8;
+            buttons[i].SetBounds(x, buttonY, buttonWidth, S(48));
+            x += buttonWidth + gap;
         }
     }
 
@@ -1195,7 +1301,7 @@ internal sealed partial class SwitchEditorForm : Form
     {
         mask = 0;
         PhysicalJoystick deviceInfo = _devices[_device.SelectedIndex];
-        using Form f = new() { Text = T("Switch.Learn"), StartPosition = FormStartPosition.CenterParent, ClientSize = new Size(620, 250), BackColor = IllustratedTheme.Background, ForeColor = IllustratedTheme.Ivory, Font = Font, AutoScaleMode = AutoScaleMode.None };
+        using Form f = new() { Text = T("Switch.Learn"), StartPosition = FormStartPosition.CenterParent, ClientSize = new Size(620, 250), BackColor = IllustratedTheme.Background, ForeColor = IllustratedTheme.Ivory, Font = Font, AutoScaleMode = AutoScaleMode.Dpi };
         Label l = AdvancedSwitchManagerForm.L(string.Format(CultureInfo.CurrentCulture, T("Switch.CapturePrompt"), position), 12.5f, FontStyle.Bold);
         l.SetBounds(30, 24, 560, 140);
         l.TextAlign = ContentAlignment.MiddleCenter;
@@ -1242,7 +1348,7 @@ internal sealed partial class SwitchEditorForm : Form
             BackColor = IllustratedTheme.Background,
             ForeColor = IllustratedTheme.Ivory,
             Font = new Font("Segoe UI", 13f),
-            AutoScaleMode = AutoScaleMode.None
+            AutoScaleMode = AutoScaleMode.Dpi
         };
         Label prompt = AdvancedSwitchManagerForm.L(T("Switch.CaptureMousePrompt"), 13, FontStyle.Bold);
         prompt.SetBounds(28, 26, 504, 110);
@@ -1292,7 +1398,7 @@ internal sealed partial class SwitchEditorForm : Form
             ForeColor = IllustratedTheme.Ivory,
             Font = new Font("Segoe UI", 13f),
             KeyPreview = true,
-            AutoScaleMode = AutoScaleMode.None
+            AutoScaleMode = AutoScaleMode.Dpi
         };
         Label prompt = AdvancedSwitchManagerForm.L(T("Switch.CaptureKeyPrompt"), 13, FontStyle.Bold);
         prompt.SetBounds(28, 26, 504, 110);
@@ -1412,7 +1518,7 @@ internal sealed partial class SwitchEditorForm : Form
                 return false;
             }
             if (row.Tag is SwitchStateDefinition recorded && recorded.Gesture.Count > 0 && recorded.Sequence.Count == 0)
-            { MessageBox.Show(this, "Assign an Action Sequence to the recorded gesture before saving."); return false; }
+            { MessageBox.Show(this, T("Switch.GestureNeedsSequence"), T("Switch.SequenceTitle"), MessageBoxButtons.OK, MessageBoxIcon.Warning); return false; }
             if (row.Tag is SwitchStateDefinition macro && macro.Sequence.Count > 0 || row.Tag is SwitchStateDefinition unchanged &&
                 action == unchanged.OutputKey && (kind == unchanged.OutputKind || unchanged.OutputKind == SwitchActionKind.VJoyButton))
             {
@@ -1503,7 +1609,8 @@ internal sealed class SwitchTestForm : Form
     public SwitchTestForm(AdvancedSwitchService service, SwitchDefinition definition) : this(service, definition, "en") { }
     public SwitchTestForm(AdvancedSwitchService service, SwitchDefinition definition, string languageCode)
     {
-        _service = service; _definition = definition; _languageCode = AppText.Normalize(languageCode); Text = string.Format(CultureInfo.CurrentCulture, T("Switch.TestTitle"), definition.Name); StartPosition = FormStartPosition.CenterParent; ClientSize = new Size(650, 410); BackColor = IllustratedTheme.Background; ForeColor = IllustratedTheme.Ivory; Font = new Font("Segoe UI", 11f); AutoScaleMode = AutoScaleMode.None;
+        _service = service; _definition = definition; _languageCode = AppText.Normalize(languageCode); Text = string.Format(CultureInfo.CurrentCulture, T("Switch.TestTitle"), definition.Name); StartPosition = FormStartPosition.CenterParent; ClientSize = new Size(650, 410); BackColor = IllustratedTheme.Background; ForeColor = IllustratedTheme.Ivory; Font = new Font("Segoe UI", 11f); AutoScaleMode = AutoScaleMode.Dpi;
+        HandleCreated += (_, _) => IllustratedTheme.ApplyWindowChrome(this);
         Label title = AdvancedSwitchManagerForm.L(definition.Name.ToUpperInvariant(), 18, FontStyle.Bold); title.SetBounds(24, 20, 580, 40);
         _state = AdvancedSwitchManagerForm.L(string.Format(CultureInfo.CurrentCulture, T("Switch.PhysicalState"), ""), 13, FontStyle.Bold); _state.SetBounds(30, 85, 580, 44);
         _transition = AdvancedSwitchManagerForm.L(string.Format(CultureInfo.CurrentCulture, T("Switch.Transition"), "", ""), 11, FontStyle.Regular); _transition.SetBounds(30, 145, 580, 38);
@@ -1515,7 +1622,7 @@ internal sealed class SwitchTestForm : Form
             SwitchStateDefinition? currentState = _definition.States.FirstOrDefault(s => s.Name.Equals(_previous, StringComparison.OrdinalIgnoreCase)) ?? _definition.States.FirstOrDefault();
             if (currentState is null) return;
             try { _service.TestPulse(currentState.OutputButton); }
-            catch (Exception ex) { MessageBox.Show(this, ex.Message, "vJoy output", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+            catch (Exception ex) { MessageBox.Show(this, ex.Message, T("Switch.VJoyOutputTitle"), MessageBoxButtons.OK, MessageBoxIcon.Warning); }
         };
         Button close = AdvancedSwitchManagerForm.B(T("Switch.Close")); close.SetBounds(465, 340, 140, 42); close.Click += (_, _) => Close();
         Controls.AddRange(new Control[] { title, _state, _transition, _action, _raw, testOutput, close });

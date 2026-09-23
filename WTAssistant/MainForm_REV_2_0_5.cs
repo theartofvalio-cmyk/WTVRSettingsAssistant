@@ -25,7 +25,9 @@ public partial class MainForm
         _aircraftHomeFilter.BringToFront();
     }
     private GameInstallations _installations = new();
-    private bool _launchBusy, _versionStatusBusy;
+    private bool _launchBusy, _versionStatusBusy, _versionRefreshPending;
+    private DateTime _gameLaunchPendingUntilUtc = DateTime.MinValue;
+    private bool GameLaunchPending => DateTime.UtcNow < _gameLaunchPendingUntilUtc;
     private bool _selectedGameUpdateAvailable;
     private string _gameVersionStatusText = AppText.T("en", "Game.Status.Checking");
     private Color _gameVersionStatusColor = Color.FromArgb(236, 185, 71);
@@ -87,41 +89,85 @@ public partial class MainForm
 
     private async Task RefreshGameVersionStatusAsync()
     {
-        if (_versionStatusBusy || IsDisposed || _revisionCancellation.IsCancellationRequested) return;
-        _versionStatusBusy = true;
+        if (IsDisposed || _revisionCancellation.IsCancellationRequested) return;
+        if (_versionStatusBusy)
+        {
+            // Do not lose a branch/profile refresh just because another version
+            // request is still finishing. Run one fresh pass immediately after it.
+            _versionRefreshPending = true;
+            return;
+        }
+
+        do
+        {
+            _versionRefreshPending = false;
+            _versionStatusBusy = true;
+            try
+            {
+                await RefreshGameVersionStatusCoreAsync();
+            }
+            finally
+            {
+                _versionStatusBusy = false;
+            }
+        }
+        while (_versionRefreshPending && !IsDisposed && !_revisionCancellation.IsCancellationRequested);
+    }
+
+    private async Task RefreshGameVersionStatusCoreAsync()
+    {
         try
         {
             if (!TryGetCurrentGameRoot(out string root))
             {
+                _selectedGameUpdateAvailable = false;
+                _aviationHome?.SetGameUpdateAvailable(false);
                 SetGameVersionStatus(T("Game.Status.SelectFolder"), Color.FromArgb(236, 185, 71));
                 return;
             }
 
-            VersionCheck check = await _gameServices.CheckVersionAsync(root, SelectedGameServerChannel, _revisionCancellation.Token);
-            ApplyVersionCheckToStatus(check, SelectedGameServerChannel);
+            // Capture the branch used for this request. If the user changes
+            // LIVE/TEST while the network request is running, never apply the
+            // old response to the newly selected branch.
+            GameServerChannel channel = SelectedGameServerChannel;
+            VersionCheck check = await _gameServices.CheckVersionAsync(root, channel, _revisionCancellation.Token);
+            if (channel != SelectedGameServerChannel)
+            {
+                _versionRefreshPending = true;
+                return;
+            }
+            ApplyVersionCheckToStatus(check, channel);
+
             try
             {
-                Task<Version?> liveTask = _gameServices.LatestAsync(GameServerChannel.Live, _revisionCancellation.Token);
-                Task<Version?> testTask = _gameServices.LatestAsync(GameServerChannel.Test, _revisionCancellation.Token);
+                // Use the same effective version logic for the Home cards that is
+                // used for the selected branch status. This prevents the top Live/Test
+                // cards from disagreeing with the footer when Gaijin's public version
+                // endpoint briefly lags behind a build the official launcher has
+                // already validated on that circuit.
+                Task<VersionCheck> liveTask = _gameServices.CheckVersionAsync(root, GameServerChannel.Live, _revisionCancellation.Token);
+                Task<VersionCheck> testTask = _gameServices.CheckVersionAsync(root, GameServerChannel.Test, _revisionCancellation.Token);
                 await Task.WhenAll(liveTask, testTask);
-                SetHomeServerVersions(liveTask.Result, testTask.Result);
+                SetHomeServerVersions(liveTask.Result.Latest, testTask.Result.Latest);
             }
             catch { SetHomeServerVersions(null, null); }
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
+            _selectedGameUpdateAvailable = false;
+            _aviationHome?.SetGameUpdateAvailable(false);
             SetGameVersionStatus(T("Game.Status.Unavailable"), Color.FromArgb(236, 185, 71));
             WriteRevisionLog("Version status", ex);
         }
-        finally { _versionStatusBusy = false; }
     }
 
     private void ApplyVersionCheckToStatus(VersionCheck check, GameServerChannel channel)
     {
+        if (IsDisposed || channel != SelectedGameServerChannel) return;
         _selectedGameUpdateAvailable = check.UpdateAvailable;
         _aviationHome?.SetGameUpdateAvailable(_selectedGameUpdateAvailable);
-        string name = channel == GameServerChannel.Test ? "TEST" : "LIVE";
+        string name = channel == GameServerChannel.Test ? T("Home.TestServer") : T("Home.LiveServer");
         if (check.Installed == null)
             SetGameVersionStatus(TF("Game.Status.UnknownVersion", name), Color.FromArgb(236, 185, 71));
         else if (check.Latest == null)
@@ -152,16 +198,23 @@ public partial class MainForm
     {
         if (_vtrimForm is { IsDisposed: false }) return;
 
+        HOTASTrimUtility.Form1.SetHostVisualTheme(_uiTheme);
         _vtrimForm = new HOTASTrimUtility.Form1(Path.Combine(SettingsFolder, "VTrim"), true)
         {
             TopLevel = false,
             FormBorderStyle = FormBorderStyle.None,
             ShowInTaskbar = false,
+            Icon = this.Icon,
             MinimumSize = Size.Empty,
             Bounds = ThemeContentBounds
         };
 
         _vtrimForm.ApplyLanguage(_languageCode);
+        _vtrimForm.AircraftProfileEditorRequested += profileName =>
+        {
+            OpenVTrim();
+            _vtrimForm?.OpenAircraftProfileEditor(profileName);
+        };
 
         Controls.Add(_vtrimForm);
         _vtrimForm.Show(); // Restores the saved output preference even while Home is visible.
@@ -220,8 +273,7 @@ public partial class MainForm
     {
         try
         {
-            if (File.Exists(InstallationsFile))
-                _installations = JsonSerializer.Deserialize<GameInstallations>(File.ReadAllText(InstallationsFile)) ?? new();
+            _installations = GameInstallations.Load(InstallationsFile);
 
             string root = string.Empty;
             if (File.Exists(_configBlkPath) && File.Exists(_warThunderExePath))
@@ -303,7 +355,7 @@ public partial class MainForm
     }
 
     private void SaveGameInstallations() =>
-        AtomicFile.WriteText(InstallationsFile, JsonSerializer.Serialize(_installations, new JsonSerializerOptions { WriteIndented = true }));
+        AtomicFile.WriteTextWithBackup(InstallationsFile, JsonSerializer.Serialize(_installations, new JsonSerializerOptions { WriteIndented = true }));
 
     // Channel is retained in the signature for old call sites, but 1.8.4 deliberately
     // uses ONE War Thunder installation and switches only the yunetwork{} block.
@@ -337,7 +389,7 @@ public partial class MainForm
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "War Thunder folder", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, ex.Message, T("Profiles.FolderTitle"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return false;
         }
     }
@@ -387,18 +439,44 @@ public partial class MainForm
         File.Copy(configPath, snapshot, true);
     }
 
+    private async Task HandleServerSwitchAsync(GameServerChannel previous, GameServerChannel channel)
+    {
+        if (previous == channel || IsDisposed || _revisionCancellation.IsCancellationRequested) return;
+
+        // Changing the circuit is a config selection. The installed and latest
+        // versions decide whether the official updater is needed.
+        _selectedGameUpdateAvailable = false;
+        _aviationHome?.SetGameUpdateAvailable(false);
+        UpdateVisualStates();
+
+        try
+        {
+            if (!TryGetCurrentGameRoot(out string root)) return;
+            VersionCheck check = await _gameServices.CheckVersionAsync(root, channel, _revisionCancellation.Token);
+            if (channel != SelectedGameServerChannel) return;
+
+            ApplyVersionCheckToStatus(check, channel);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            WriteRevisionLog("Server branch switch", ex);
+            await RefreshGameVersionStatusAsync();
+        }
+    }
+
     private bool SwitchGameInstallation(GameServerChannel channel)
     {
         try
         {
-            if (GameIsRunning()) throw new IOException("Close War Thunder before switching Live/Test server.");
+            if (IsWarThunderRunningOrStarting()) throw new IOException(T("Warning.CloseGameBeforeServer"));
             string root = GameInstallations.CanonicalRoot(_installations.LiveRoot);
             if (string.IsNullOrWhiteSpace(root) || !File.Exists(Path.Combine(root, "config.blk")) || !File.Exists(Path.Combine(root, "launcher.exe")))
             {
                 if (!TryGetCurrentGameRoot(out root) && !ChooseGameFolder(channel)) return false;
                 if (!TryGetCurrentGameRoot(out root)) return false;
             }
-            if (LauncherRunningIn(root)) throw new IOException("Close the War Thunder launcher before switching Live/Test server.");
+            if (LauncherRunningIn(root)) throw new IOException(T("Warning.CloseLauncherBeforeServer"));
 
             string config = Path.Combine(root, "config.blk");
             PrepareDevServerWorkspace(root, config, channel == GameServerChannel.Test);
@@ -413,21 +491,25 @@ public partial class MainForm
             SaveGameInstallations();
             SaveState();
             UpdateVisualStates();
-            _ = RefreshGameVersionStatusAsync();
             return true;
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "Live/Test server", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, ex.Message, T("Dialog.GameServerTitle"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return false;
         }
     }
 
     private static bool GameIsRunning()
     {
-        Process[] processes = Process.GetProcessesByName("aces");
-        try { return processes.Length != 0; }
-        finally { foreach (var process in processes) process.Dispose(); }
+        Process[] aces = Process.GetProcessesByName("aces");
+        Process[] acesBe = Process.GetProcessesByName("aces_BE");
+        try { return aces.Length != 0 || acesBe.Length != 0; }
+        finally
+        {
+            foreach (var process in aces) process.Dispose();
+            foreach (var process in acesBe) process.Dispose();
+        }
     }
 
     private static bool LauncherRunningIn(string root)
@@ -458,83 +540,43 @@ public partial class MainForm
         finally { foreach (var process in processes) process.Dispose(); }
     }
 
-    private static void CloseLaunchersIn(string root)
-    {
-        foreach (Process p in Process.GetProcessesByName("launcher"))
-        {
-            try
-            {
-                string? file = p.MainModule?.FileName;
-                if (file == null || !string.Equals(Path.GetDirectoryName(file), root, StringComparison.OrdinalIgnoreCase)) continue;
-                if (!p.CloseMainWindow()) p.Kill(false);
-            }
-            catch { }
-            finally { p.Dispose(); }
-        }
-    }
-
     private async Task<bool> RunOfficialUpdaterAsync(string root, CancellationToken token)
     {
-        if (GameIsRunning()) throw new IOException("Close War Thunder before updating game files.");
-        if (LauncherRunningIn(root)) throw new IOException("Close the existing official launcher and try again.");
+        if (IsWarThunderRunningOrStarting()) throw new IOException(T("Warning.CloseGameBeforeServer"));
+        if (LauncherRunningIn(root)) throw new IOException(T("Warning.CloseLauncherBeforeServer"));
 
-        // The official launcher reads the selected circuit from the same config.blk,
-        // so set Live/dev immediately before starting it. This keeps the user's custom
-        // graphics and controls while letting Gaijin patch the correct branch.
+        // The updater is update-only. WT Assistant starts the official launcher,
+        // keeps the selected circuit in config.blk, then waits for the USER to
+        // close the launcher. It must never close the launcher on its own and it
+        // must never chain directly into aces.exe after an update.
         WarThunderServerConfig.ApplyToFile(Path.Combine(root, "config.blk"), SelectedGameServerChannel);
+        DateTimeOffset launcherStartedAt = DateTimeOffset.UtcNow;
         using var process = Process.Start(new ProcessStartInfo(Path.Combine(root, "launcher.exe"))
         {
             WorkingDirectory = root,
             UseShellExecute = true
         }) ?? throw new IOException("The official launcher did not start.");
 
-        // Keep watching the selected branch while the official launcher updates it.
-        // As soon as the local manifest reaches the branch version, close the launcher
-        // automatically so the user returns to WT Assistant without an extra step.
-        Version? target = null;
-        try { target = await _gameServices.LatestAsync(SelectedGameServerChannel, token); } catch { }
-        int exactMatchTicks = 0;
-        for (int i = 0; i < 1200 && LauncherRunningIn(root); i++)
-        {
-            await Task.Delay(500, token);
-            Version? installed = GameServices.ReadInstalledVersion(root);
-            if (target != null && installed != null && installed == target)
-            {
-                // Require a short stable window so we do not close the launcher
-                // while it is still finishing manifest/file bookkeeping.
-                exactMatchTicks++;
-                if (exactMatchTicks >= 4)
-                {
-                    CloseLaunchersIn(root);
-                    break;
-                }
-            }
-            else
-            {
-                exactMatchTicks = 0;
-            }
-        }
-        if (!process.HasExited)
-        {
-            try { await process.WaitForExitAsync(token); } catch { }
-        }
-
-        // launcher.exe may hand off to another launcher/updater instance before
-        // the first process exits. Do not read version metadata until every
-        // launcher from this installation has been gone for a short quiet window.
+        // launcher.exe can hand off to another launcher/updater instance. Wait
+        // until every launcher belonging to THIS War Thunder installation has
+        // been closed for a short quiet window before refreshing version state.
         int quiet = 0;
-        int waited = 0;
-        while (quiet < 4 && waited < 300)
+        while (quiet < 4)
         {
+            token.ThrowIfCancellationRequested();
+            bool primaryRunning;
+            try { primaryRunning = !process.HasExited; }
+            catch { primaryRunning = false; }
+            bool anyLauncher = LauncherRunningIn(root);
+            quiet = primaryRunning || anyLauncher ? 0 : quiet + 1;
             await Task.Delay(500, token);
-            waited++;
-            quiet = LauncherRunningIn(root) ? 0 : quiet + 1;
         }
-        if (quiet < 4)
-            throw new IOException("The official launcher/updater did not fully close within 150 seconds. Close it, then press Launch Game again; WT Assistant will refresh the local manifest immediately.");
 
-        // Reassert the selected circuit in case the launcher rewrote config.blk.
+        // The user may have started the game from the official launcher.
+        // Do not rewrite its configuration while it is running.
+        if (GameIsRunning()) return false;
         WarThunderServerConfig.ApplyToFile(Path.Combine(root, "config.blk"), SelectedGameServerChannel);
+
         return !GameIsRunning();
     }
 
@@ -559,7 +601,13 @@ public partial class MainForm
         {
             ApplyVersionCheckToStatus(last, channel);
             await Task.Delay(500, token);
-            last = new(GameServices.ReadInstalledVersion(root), latest, "Local warthunder.yup / launcher metadata.");
+            Version? installed = GameServices.ReadInstalledVersion(root);
+            if (installed != null && GameServices.IsLauncherValidatedBuild(root, channel, installed))
+            {
+                last = new(installed, installed, "Official launcher validated the selected branch.");
+                break;
+            }
+            last = new(installed, latest, "Local warthunder.yup / launcher metadata.");
         }
 
         // One final online check catches a version that changed again while the
@@ -583,6 +631,89 @@ public partial class MainForm
         return last;
     }
 
+    private void HomePrimaryAction()
+    {
+        // The large Home button is mode-aware: UPDATE only updates, LAUNCH only
+        // launches. Keeping those operations separate prevents a completed update
+        // from unexpectedly starting War Thunder.
+        if (_selectedGameUpdateAvailable)
+            _ = UpdateSelectedGameAsync();
+        else
+            LaunchWarThunder();
+    }
+
+    private async Task UpdateSelectedGameAsync()
+    {
+        if (_launchBusy) return;
+        _launchBusy = true;
+        UpdateVisualStates();
+        try
+        {
+            if (GameIsRunning() || GameLaunchPending)
+            {
+                MessageBox.Show(this, T("Game.AlreadyRunning"));
+                return;
+            }
+            if (!ApplySelectedGameServer(true)) return;
+            if (!TryGetCurrentGameRoot(out string root))
+            {
+                MessageBox.Show(this, T("Game.SelectInstallFirst"));
+                return;
+            }
+            if (LauncherRunningIn(root))
+            {
+                MessageBox.Show(this, T("Game.LauncherRunning"));
+                return;
+            }
+
+            GameServerChannel channel = SelectedGameServerChannel;
+            string branch = channel == GameServerChannel.Test ? T("Home.TestServer") : T("Home.LiveServer");
+            VersionCheck check = await _gameServices.CheckVersionAsync(root, channel, _revisionCancellation.Token);
+            ApplyVersionCheckToStatus(check, channel);
+
+            if (check.Latest == null)
+            {
+                SetGameVersionStatus(TF("Game.Status.CannotVerify", branch), Color.FromArgb(236, 185, 71));
+                MessageBox.Show(this, TF("Game.VerifyBranchFailed", branch),
+                    T("Game.VersionCheckTitle"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (check.Current)
+            {
+                ApplyVersionCheckToStatus(check, channel);
+                return;
+            }
+
+            SetGameVersionStatus(TF("Game.Status.Switching", branch,
+                check.Installed?.ToString() ?? T("Common.Unknown"), branch), Color.FromArgb(236, 185, 71));
+
+            if (!await RunOfficialUpdaterAsync(root, _revisionCancellation.Token))
+                return;
+
+            // The launcher has been closed by the user. Refresh the local
+            // manifest; the Home button becomes LAUNCH when versions match.
+            check = await WaitForGameVersionConvergenceAsync(root, channel, check.Latest, _revisionCancellation.Token);
+            ApplyVersionCheckToStatus(check, channel);
+            await RefreshGameVersionStatusAsync();
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            WriteRevisionLog("Game update", ex);
+            if (!IsDisposed) MessageBox.Show(this, ex.Message, T("Game.UpdateDialogTitle"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            _launchBusy = false;
+            if (!IsDisposed)
+            {
+                UpdateVisualStates();
+                _ = RefreshGameVersionStatusAsync();
+            }
+        }
+    }
+
     private async void LaunchWarThunder()
     {
         if (_launchBusy) return;
@@ -590,45 +721,42 @@ public partial class MainForm
         UpdateVisualStates();
         try
         {
-            if (GameIsRunning()) { MessageBox.Show(this, T("Game.AlreadyRunning")); return; }
+            if (GameIsRunning() || GameLaunchPending) { MessageBox.Show(this, T("Game.AlreadyRunning")); return; }
             if (!ApplySelectedGameServer(true)) return;
             if (!TryGetCurrentGameRoot(out string root)) { MessageBox.Show(this, T("Game.SelectInstallFirst")); return; }
             if (LauncherRunningIn(root)) { MessageBox.Show(this, T("Game.LauncherRunning")); return; }
 
             GameServerChannel channel = SelectedGameServerChannel;
-            string branch = channel == GameServerChannel.Test ? "TEST" : "LIVE";
+            string branch = channel == GameServerChannel.Test ? T("Home.TestServer") : T("Home.LiveServer");
             VersionCheck check = await _gameServices.CheckVersionAsync(root, channel, _revisionCancellation.Token);
             ApplyVersionCheckToStatus(check, channel);
 
-            // Strict branch matching: a newer TEST build is not current for LIVE and
-            // a LIVE build is not current for TEST. Only exact equality direct-launches.
             if (check.Latest == null)
             {
                 SetGameVersionStatus(TF("Game.Status.CannotVerify", branch), Color.FromArgb(236, 185, 71));
-                MessageBox.Show(this,
-                    $"WT Assistant could not verify the required {branch} build from Gaijin.\n\nThe game will not launch against an unverified branch. Check your internet connection and try again.",
-                    "War Thunder version check", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(this, TF("Game.VerifyBranchFailed", branch),
+                    T("Game.VersionCheckTitle"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
+            // LAUNCH never performs an update. If a fresh check discovers that the
+            // selected branch is not ready, switch the Home button to UPDATE and
+            // let the user explicitly run the updater on the next click.
             if (!check.Current)
             {
-                SetGameVersionStatus(TF("Game.Status.Switching", branch, check.Installed?.ToString() ?? T("Common.Unknown"), check.Latest), Color.FromArgb(236, 185, 71));
-                if (!await RunOfficialUpdaterAsync(root, _revisionCancellation.Token)) return;
-                check = await WaitForGameVersionConvergenceAsync(root, channel, check.Latest, _revisionCancellation.Token);
-                if (!check.Current)
-                {
-                    MessageBox.Show(this,
-                        $"The official launcher finished, but the installed build ({check.Installed?.ToString() ?? "unknown"}) still does not exactly match the selected {branch} build ({check.Latest?.ToString() ?? "unknown"}).\n\nWT Assistant will not launch the wrong branch.",
-                        "Branch update not complete", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
+                _selectedGameUpdateAvailable = true;
+                _aviationHome?.SetGameUpdateAvailable(true);
+                ApplyVersionCheckToStatus(check, channel);
+                UpdateVisualStates();
+                return;
             }
 
             WarThunderServerConfig.ApplyToFile(Path.Combine(root, "config.blk"), channel);
             ApplyVersionCheckToStatus(check, channel);
             await RefreshGameVersionStatusAsync();
-            if (!IsDisposed && !_revisionCancellation.IsCancellationRequested && !GameIsRunning()) LaunchWarThunderDirect();
+            if (_selectedGameUpdateAvailable) return;
+            if (!IsDisposed && !_revisionCancellation.IsCancellationRequested && !IsWarThunderRunningOrStarting())
+                LaunchWarThunderDirect();
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -645,11 +773,11 @@ public partial class MainForm
 
     private void ShowGameOptions()
     {
-        if (_launchBusy) { MessageBox.Show(this, "A game update is already in progress."); return; }
+        if (_launchBusy) { MessageBox.Show(this, T("Game.UpdateInProgress"), T("Game.UpdateDialogTitle")); return; }
 
         using Form dialog = new()
         {
-            Text = "Update War Thunder", StartPosition = FormStartPosition.CenterParent,
+            Text = T("Game.UpdateDialogTitle"), StartPosition = FormStartPosition.CenterParent,
             ClientSize = new Size(720, 330), MinimumSize = new Size(650, 300),
             Padding = new Padding(14),
             BackColor = IllustratedTheme.Background, ForeColor = IllustratedTheme.Ivory, AutoScaleMode = AutoScaleMode.Dpi
@@ -664,7 +792,7 @@ public partial class MainForm
         };
         ThemeButton update = new()
         {
-            Dock = DockStyle.Bottom, Height = 92, Margin = Padding.Empty, Text = "UPDATE GAME",
+            Dock = DockStyle.Bottom, Height = 92, Margin = Padding.Empty, Text = T("Game.UpdateButton"),
             Font = new Font("Segoe UI", 23, FontStyle.Bold, GraphicsUnit.Pixel)
         };
         Label result = new()
@@ -676,9 +804,9 @@ public partial class MainForm
 
         async Task RefreshInfo()
         {
-            if (!TryGetCurrentGameRoot(out string root)) { info.Text = "War Thunder installation not found."; return; }
+            if (!TryGetCurrentGameRoot(out string root)) { info.Text = T("Game.InstallationNotFound"); return; }
             VersionCheck c = await _gameServices.CheckVersionAsync(root, SelectedGameServerChannel, _revisionCancellation.Token);
-            info.Text = $"{(SelectedGameServerChannel == GameServerChannel.Test ? "TEST" : "LIVE")}  •  Installed {c.Installed?.ToString() ?? "unknown"}  •  Server {c.Latest?.ToString() ?? "unknown"}";
+            info.Text = TF("Game.UpdateInfo", SelectedGameServerChannel == GameServerChannel.Test ? T("Home.TestServer") : T("Home.LiveServer"), c.Installed?.ToString() ?? T("Common.Unknown"), c.Latest?.ToString() ?? T("Common.Unknown"));
         }
 
         update.Click += async (_, _) =>
@@ -689,13 +817,22 @@ public partial class MainForm
             {
                 WarThunderServerConfig.ApplyToFile(Path.Combine(root, "config.blk"), SelectedGameServerChannel);
                 VersionCheck c = await _gameServices.CheckVersionAsync(root, SelectedGameServerChannel, _revisionCancellation.Token);
-                if (c.Current) result.Text = "The selected server version is already installed.";
+                ApplyVersionCheckToStatus(c, SelectedGameServerChannel);
+                if (c.Latest is null)
+                {
+                    result.Text = T("Game.UpdateVersionVerifyFailed");
+                }
+                else if (c.Current) result.Text = T("Game.UpdateAlreadyInstalled");
                 else
                 {
-                    result.Text = "Updating through the official launcher. It will close automatically when the update completes.";
-                    await RunOfficialUpdaterAsync(root, _revisionCancellation.Token);
-                    c = await WaitForGameVersionConvergenceAsync(root, SelectedGameServerChannel, c.Latest, _revisionCancellation.Token);
-                    result.Text = c.Current ? $"Update complete: {c.Installed}." : "The launcher closed, but the selected version could not yet be confirmed.";
+                    result.Text = T("Game.UpdateOfficialLauncher");
+                    if (await RunOfficialUpdaterAsync(root, _revisionCancellation.Token))
+                    {
+                        c = await WaitForGameVersionConvergenceAsync(root, SelectedGameServerChannel, c.Latest, _revisionCancellation.Token);
+                        ApplyVersionCheckToStatus(c, SelectedGameServerChannel);
+                        result.Text = c.Current ? TF("Game.UpdateComplete", c.Installed?.ToString() ?? T("Common.Unknown")) : T("Game.UpdateUnconfirmed");
+                    }
+                    else result.Text = T("Game.UpdateLauncherFailed");
                 }
                 await RefreshGameVersionStatusAsync(); await RefreshInfo();
             }

@@ -33,7 +33,7 @@ public partial class Form1
             {
                 _vJoyStatusLabel.Text = ex.Message;
                 SetInstruction(ex.Message, Theme.Warning);
-                MessageBox.Show(this, ex.Message, "vJoy setup", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(this, ex.Message, VT("VJoy.SetupTitle"), MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             return false;
         }
@@ -126,12 +126,12 @@ public partial class Form1
             UseMnemonic = false
         };
 
-        _vJoyConnectButton = I18n(CreatePrimaryButton("Set up / Connect"), "VJoy.SetupConnect");
+        _vJoyConnectButton = I18n(CreatePrimaryButton(VT("VJoy.SetupConnect")), "VJoy.SetupConnect");
         _vJoyConnectButton.Dock = DockStyle.Fill;
         _vJoyConnectButton.Margin = new Padding(4, 5, 4, 5);
         _vJoyConnectButton.Click += (_, _) => ToggleVJoyConnection();
 
-        Button test = I18n(CreateSecondaryButton("Test Axes"), "VJoy.TestAxes");
+        Button test = I18n(CreateSecondaryButton(VT("VJoy.TestAxes")), "VJoy.TestAxes");
         test.Dock = DockStyle.Fill;
         test.Margin = new Padding(4, 5, 4, 5);
         test.Click += (_, _) => OpenJoyControlPanel();

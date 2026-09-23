@@ -24,6 +24,17 @@ internal static class AtomicFile
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
+
+    public static void WriteTextWithBackup(string path, string text)
+    {
+        string full = Path.GetFullPath(path);
+        string backup = full + ".bak";
+        if (File.Exists(full))
+        {
+            try { File.Copy(full, backup, true); } catch { }
+        }
+        WriteText(full, text);
+    }
 }
 
 internal enum SignalState { Unknown, Available, Unavailable }
@@ -31,18 +42,28 @@ internal sealed record ServerSignal(SignalState State, string Label, string Deta
 {
     public static ServerSignal Unknown(string detail) => new(SignalState.Unknown, "UNKNOWN", detail, DateTimeOffset.UtcNow);
 }
-internal sealed record VersionCheck(Version? Installed, Version? Latest, string Detail)
+internal sealed record VersionCheck(Version? Installed, Version? Latest, string Detail, bool BranchMismatchDetected = false)
 {
-    public bool UpdateAvailable => Installed != null && Latest != null && Installed != Latest;
+    public bool UpdateAvailable => Latest != null && Installed != Latest;
     public bool Current => Installed != null && Latest != null && Installed == Latest;
-    public bool BranchMismatch => Installed != null && Latest != null && Installed != Latest;
+    public bool BranchMismatch => BranchMismatchDetected;
 }
+
+internal sealed record LauncherBranchValidation(
+    GameServerChannel Channel,
+    Version Version,
+    DateTimeOffset LogTime);
 
 internal sealed class GameServices : IDisposable
 {
-    private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(10), MaxResponseContentBufferSize = 2 * 1024 * 1024 };
+    private readonly HttpClient _http;
     internal const string VersionEndpoint = "https://yupmaster.gaijinent.com/yuitem/get_version.php?proj=warthunder&tag=";
-    public GameServices() => _http.DefaultRequestHeaders.UserAgent.ParseAdd("WTAssistant/2.0");
+    public GameServices() : this(new HttpClientHandler()) { }
+    internal GameServices(HttpMessageHandler handler)
+    {
+        _http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10), MaxResponseContentBufferSize = 2 * 1024 * 1024 };
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd("WTAssistant/2.0");
+    }
 
     internal static Version? ParseVersion(string? text)
     {
@@ -129,6 +150,122 @@ internal sealed class GameServices : IDisposable
         return null;
     }
 
+    internal static LauncherBranchValidation? ParseLauncherBranchValidation(string text, DateTimeOffset logTime)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        try
+        {
+            MatchCollection circuitMatches = Regex.Matches(text,
+                @"(?:onGameVersion:\s*)?curCircuit\s*=\s*(?<channel>production|dev)",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+                TimeSpan.FromMilliseconds(200));
+            if (circuitMatches.Count == 0) return null;
+
+            Match circuitMatch = circuitMatches[circuitMatches.Count - 1];
+            GameServerChannel channel = string.Equals(
+                circuitMatch.Groups["channel"].Value,
+                "dev",
+                StringComparison.OrdinalIgnoreCase)
+                ? GameServerChannel.Test
+                : GameServerChannel.Live;
+
+            MatchCollection versionMatches = Regex.Matches(text,
+                @"(?:game\s+version\s*:\s*|yup_version\s*=\s*)(?<version>\d{1,5}\.\d{1,5}\.\d{1,5}\.\d{1,5})",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+                TimeSpan.FromMilliseconds(200));
+            for (int i = versionMatches.Count - 1; i >= 0; i--)
+            {
+                // Never associate an earlier branch's version with a later
+                // circuit selection that has not reported a version yet.
+                if (versionMatches[i].Index < circuitMatch.Index) break;
+                if (Version.TryParse(versionMatches[i].Groups["version"].Value, out Version? parsed))
+                    return new LauncherBranchValidation(channel, parsed, logTime);
+            }
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            // A malformed launcher log must never block the normal version path.
+        }
+        return null;
+    }
+
+    internal static LauncherBranchValidation? ReadLauncherBranchValidation(
+        string root,
+        DateTimeOffset? notBefore = null)
+    {
+        try
+        {
+            string directory = Path.Combine(root, ".launcher_log");
+            if (!Directory.Exists(directory)) return null;
+
+            DateTimeOffset threshold = notBefore?.AddSeconds(-3) ?? DateTimeOffset.MinValue;
+            foreach (FileInfo file in new DirectoryInfo(directory).EnumerateFiles()
+                         .OrderByDescending(f => f.LastWriteTimeUtc).Take(8))
+            {
+                DateTimeOffset logTime = new(file.LastWriteTimeUtc, TimeSpan.Zero);
+                if (logTime < threshold) continue;
+
+                string text;
+                using (var stream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read,
+                           FileShare.ReadWrite | FileShare.Delete))
+                {
+                    const int maxTail = 3 * 1024 * 1024;
+                    long offset = Math.Max(0, stream.Length - maxTail);
+                    stream.Seek(offset, SeekOrigin.Begin);
+                    using var reader = new StreamReader(stream, Encoding.UTF8, true, 4096, leaveOpen: false);
+                    text = reader.ReadToEnd();
+                }
+
+                LauncherBranchValidation? validation = ParseLauncherBranchValidation(text, logTime);
+                if (validation != null) return validation;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Fall back to the Gaijin version endpoint + local manifest comparison.
+        }
+        return null;
+    }
+
+    internal static LauncherBranchValidation? ReadValidatedInstalledBranch(
+        string root,
+        Version version,
+        DateTimeOffset? notBefore = null)
+    {
+        LauncherBranchValidation? validation = ReadLauncherBranchValidation(root, notBefore);
+        if (validation == null || validation.Version != version)
+            return null;
+
+        // Do not trust a launcher log that predates a subsequently replaced
+        // manifest. A small tolerance covers the launcher's final bookkeeping.
+        try
+        {
+            string manifest = Path.Combine(root, "warthunder.yup");
+            if (File.Exists(manifest))
+            {
+                DateTimeOffset manifestTime = new(File.GetLastWriteTimeUtc(manifest), TimeSpan.Zero);
+                if (validation.LogTime.AddMinutes(2) < manifestTime)
+                    return null;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+
+        return validation;
+    }
+
+    internal static bool IsLauncherValidatedBuild(
+        string root,
+        GameServerChannel channel,
+        Version version,
+        DateTimeOffset? notBefore = null)
+    {
+        LauncherBranchValidation? validation = ReadValidatedInstalledBranch(root, version, notBefore);
+        return validation != null && validation.Channel == channel;
+    }
+
     internal static Version? PreferInstalledVersion(
         Version? yupVersion,
         Version? launcherLogVersion,
@@ -199,15 +336,39 @@ internal sealed class GameServices : IDisposable
     public async Task<VersionCheck> CheckVersionAsync(string root, GameServerChannel channel, CancellationToken token)
     {
         Version? installed = null;
+        LauncherBranchValidation? validated = null;
         try
         {
             installed = ReadInstalledVersion(root);
+            validated = installed == null ? null : ReadValidatedInstalledBranch(root, installed);
             var latest = await LatestAsync(channel, token);
+
+            // Keep launcher circuit information for diagnostics. A branch
+            // switch alone does not require an update when versions match.
+            if (installed != null)
+            {
+                if (validated != null && validated.Channel != channel)
+                {
+                    return new(installed, latest,
+                        $"Official launcher last validated {validated.Channel} build {installed}; selected branch is {channel}.",
+                        BranchMismatchDetected: true);
+                }
+
+                // The public version endpoint can briefly lag behind the launcher
+                // during a rollout. Only accept the newer/different installed
+                // build when the launcher validated the SAME selected branch.
+                if (latest != null && installed > latest && validated != null && validated.Channel == channel)
+                {
+                    return new(installed, installed,
+                        $"Official launcher validated newer {channel} build {installed}; version service reported older {latest}.");
+                }
+            }
+
             return new(installed, latest, latest == null ? "Update service returned an unsupported response." : "Gaijin version service.");
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
         catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException or UnauthorizedAccessException)
-        { return new(installed, null, ex.Message); }
+        { return new(installed, null, ex.Message, BranchMismatchDetected: validated != null && validated.Channel != channel); }
     }
     public async Task<ServerSignal> LiveSignalAsync(CancellationToken token)
     {
@@ -312,6 +473,19 @@ internal sealed class GameInstallations
 {
     public string LiveRoot { get; set; } = "";
     public string TestRoot { get; set; } = "";
+    internal static GameInstallations Load(string path)
+    {
+        foreach (string candidate in new[] { path, path + ".bak" })
+        {
+            try
+            {
+                if (File.Exists(candidate) && JsonSerializer.Deserialize<GameInstallations>(File.ReadAllText(candidate)) is { } saved)
+                    return saved;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { }
+        }
+        return new();
+    }
     public string Root(GameServerChannel channel) => channel == GameServerChannel.Test ? TestRoot : LiveRoot;
     public void Set(GameServerChannel channel, string path) { if (channel == GameServerChannel.Test) TestRoot = path; else LiveRoot = path; }
     public void SetBoth(string path) { LiveRoot = path; TestRoot = path; }
@@ -338,4 +512,3 @@ internal sealed class GameInstallations
             || b.StartsWith(a + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
     }
 }
-

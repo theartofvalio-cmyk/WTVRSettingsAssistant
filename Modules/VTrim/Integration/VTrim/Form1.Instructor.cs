@@ -31,29 +31,38 @@ public partial class Form1
     private Control? _instructorStrip;
     private Panel? _instructorLive;
     private Button? _instructorSettingsButton;
-    private Button? _instructorBindingButton;
     private double _pitchManualUntil;
     private string _lastIndicatorsJson = string.Empty, _lastStateJson = string.Empty;
     private readonly Queue<string> _instructorLog = new();
     private double _lastInstructorLogTime;
     private PitchHoldOutput _lastPitchHold;
     private static double MonotonicSeconds => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
-    private bool IsPropProfile => NormalizeAircraftType(_profileTypeBox?.SelectedItem?.ToString()) != "Helicopter";
+    // Retained name for the existing control loop. In v2.2 it means that the
+    // active aircraft/profile is eligible for Flight Assistant, not merely that
+    // it is a propeller aircraft.
+    private bool IsPropProfile => IsFlightAssistantEligibleForActiveProfile(out _);
 
     private async void WarThunderTelemetryTimer_Tick(object? sender, EventArgs e)
     {
-        if (_applicationClosing || _telemetryRequestInProgress || !_instructorModeEnabled || !IsPropProfile) return;
-        _telemetryRequestInProgress = true;
+        if (_applicationClosing || _telemetryRequestInProgress) return;
         double requestedAt = MonotonicSeconds;
+        bool instructorRequested = _instructorModeEnabled && IsPropProfile;
+        // Auto-profile detection uses a lower polling rate when active flight
+        // assistance does not need the faster telemetry cadence.
+        if (!instructorRequested && requestedAt - _lastAutoProfilePollAt < 0.35) return;
+        _lastAutoProfilePollAt = requestedAt;
+        _telemetryRequestInProgress = true;
         try
         {
             Task<string> instruments = _warThunderTelemetryClient.GetStringAsync("indicators", _telemetryShutdown.Token);
             Task<string> flight = _warThunderTelemetryClient.GetStringAsync("state", _telemetryShutdown.Token);
             await Task.WhenAll(instruments, flight);
             if (_applicationClosing || IsDisposed) return;
-            if (!_instructorModeEnabled || !IsPropProfile) return;
             _lastIndicatorsJson = await instruments;
             _lastStateJson = await flight;
+            ProcessAutomaticAircraftProfileTelemetry(_lastIndicatorsJson, _lastStateJson);
+
+            if (!_instructorModeEnabled || !IsPropProfile) return;
             _lateralSample = WarThunderTelemetry.ParseLateral(_lastIndicatorsJson, _lastStateJson, requestedAt);
             if (WarThunderTelemetry.TryParse(_lastIndicatorsJson, _lastStateJson, requestedAt,
                     out AircraftSample sample, out string reason))
@@ -120,7 +129,7 @@ public partial class Form1
     {
         ApplyAutomaticInstructorModeCore(MonotonicSeconds, GameWindow.GameFocused(), rawPitch,
             pitchAvailable, ref outputRoll, ref outputPitch, ref outputRudder);
-        bool lateralEnabled = IsPropProfile && _instructorModeEnabled && _vJoyConnected && GameWindow.GameFocused() &&
+        bool lateralEnabled = !FlightAssistantLockedPendingGaijinLegalReview && IsPropProfile && _instructorModeEnabled && _vJoyConnected && GameWindow.GameFocused() &&
             !_instructorSettingsOpen && !_horizontalRudderCalibrationArmed && !_captureAction.HasValue &&
             !_detectingAxis.HasValue && !_waitingForDeviceDetection;
         _lastRollAssist = _rollAssist.Step(MonotonicSeconds, rawRoll, outputRoll,
@@ -135,7 +144,7 @@ public partial class Form1
     private void ApplyAutomaticInstructorModeCore(double now, bool gameFocused, double rawPitch,
         bool pitchAvailable, ref double outputRoll, ref double outputPitch, ref double outputRudder)
     {
-        string? bypass = !IsPropProfile ? "FIXED-WING ONLY" : !_instructorModeEnabled ? "OFF" :
+        string? bypass = FlightAssistantLockedPendingGaijinLegalReview ? "PENDING GAIJIN REVIEW" : !IsPropProfile ? "FLIGHT ASSISTANT UNAVAILABLE" : !_instructorModeEnabled ? "OFF" :
             !_vJoyConnected ? "NO OUTPUT" : !gameFocused ? "GAME NOT FOCUSED" :
             _instructorSettingsOpen || _horizontalRudderCalibrationArmed || _storeTrimReturn.PitchWaiting ||
             _captureAction.HasValue || _detectingAxis.HasValue || _waitingForDeviceDetection ? "CONFIGURING" :
@@ -158,7 +167,6 @@ public partial class Form1
 
     private void UpdateInstructorModeUi()
     {
-        if (_instructorModeButton is null) return;
         double uiNow = MonotonicSeconds;
         if (_lastInstructorUiEnabled == _instructorModeEnabled && uiNow - _lastInstructorUiUpdate < .1) return;
         _lastInstructorUiUpdate = uiNow;
@@ -166,26 +174,18 @@ public partial class Form1
         bool available = IsPropProfile;
         if (!available && _instructorModeEnabled)
         { _instructorModeEnabled = false; ResetAutomaticInstructorHold(); }
-        _instructorModeButton.Visible = available;
-        if (_instructorStrip is not null) _instructorStrip.Visible = available;
-        if (_instructorLive is not null)
-        {
-            _instructorLive.Visible = available && _instructorModeEnabled;
-            if (_instructorLive.Parent is TableLayoutPanel meters)
-                meters.RowStyles[0].Height = Math.Max(28, Font.Height + 12) * 5 + 12;
-            if (_instructorStrip?.Parent is TableLayoutPanel host)
-            {
-                float height = 64;
-                if (host.RowStyles[2].Height != height) host.RowStyles[2].Height = height;
-            }
-            _instructorLive.Invalidate();
-        }
-        if (_instructorBindingButton is not null) _instructorBindingButton.Visible = available;
-        _instructorModeButton.Text = _instructorModeEnabled ? VT("Dashboard.InstructorOn") : VT("Dashboard.InstructorOff");
-        _instructorModeButton.BackColor = _instructorModeEnabled ? Color.FromArgb(71, 60, 39) : Theme.Control;
-        _instructorModeButton.FlatAppearance.BorderColor = _instructorModeEnabled ? Theme.Accent : Theme.Border;
+
+        // Flight Assistant is intentionally absent from the main Trim Dashboard.
+        // Runtime eligibility stays active, but every legacy dashboard surface is
+        // forced hidden. The only visible controls live inside an aircraft's Custom
+        // Profile editor.
+        if (_instructorModeButton is not null) _instructorModeButton.Visible = false;
+        if (_instructorStrip is not null) _instructorStrip.Visible = false;
+        if (_instructorLive is not null) _instructorLive.Visible = false;
+
+        // This reference is also used by the aircraft Custom Profile editor, so it
+        // follows eligibility instead of being globally hidden.
         if (!_instructorModeEnabled) _instructorState = "OFF";
-        _toolTip.SetToolTip(_instructorModeButton, "Pitch attitude hold and pitch-rate dampening. Without pitch telemetry, light input smoothing is used instead.");
         if (_instructorStatusLabel is not null)
         {
             string status = _instructorState;
@@ -266,7 +266,11 @@ public partial class Form1
 
     private void ShowInstructorSettings()
     {
-        if (!IsPropProfile) return;
+        if (!IsFlightAssistantEligibleForActiveProfile(out string eligibilityReason))
+        {
+            ShowFlightAssistantEligibilityNotice(eligibilityReason);
+            return;
+        }
         _instructorSettingsOpen = true;
         ResetAutomaticInstructorHold();
         try
@@ -347,7 +351,9 @@ public partial class Form1
                     SmoothingMilliseconds = (int)smoothing.Value,
                     DiagnosticsEnabled = false
                 };
-                _instructorModeEnabled = enabled.Checked || rollEnabled.Checked || rudderEnabled.Checked;
+                bool wantsEnabled = enabled.Checked || rollEnabled.Checked || rudderEnabled.Checked;
+                _instructorModeEnabled = wantsEnabled && IsFlightAssistantEligibleForActiveProfile(out _) &&
+                    (!wantsEnabled || ConfirmFlightAssistantEnable());
                 ResetAutomaticInstructorHold(); UpdateInstructorModeUi(); SaveBindings();
                 dialog.DialogResult = DialogResult.OK;
             };

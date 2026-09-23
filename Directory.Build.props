@@ -1,0 +1,19 @@
+<Project>
+  <!--
+    Keep ALL .NET build intermediates outside the source tree and on a short
+    Windows path. This avoids MAX_PATH failures when users extract the project
+    into a long folder name, while also keeping VTrim.csproj and
+    VTrim.Embedded.csproj from sharing obj/bin state.
+
+    Build.cmd / Publish-Clean.cmd set WTA_BUILD_TEMP explicitly. Visual Studio
+    falls back to the current user's TEMP directory.
+  -->
+  <PropertyGroup>
+    <WtaBuildRoot Condition="'$(WTA_BUILD_TEMP)' != ''">$(WTA_BUILD_TEMP)</WtaBuildRoot>
+    <WtaBuildRoot Condition="'$(WtaBuildRoot)' == '' and '$(TEMP)' != ''">$(TEMP)\WTA21</WtaBuildRoot>
+    <WtaBuildRoot Condition="'$(WtaBuildRoot)' == ''">$(MSBuildThisFileDirectory).wta-build</WtaBuildRoot>
+
+    <BaseIntermediateOutputPath>$(WtaBuildRoot)\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+    <BaseOutputPath>$(WtaBuildRoot)\bin\$(MSBuildProjectName)\</BaseOutputPath>
+  </PropertyGroup>
+</Project>
