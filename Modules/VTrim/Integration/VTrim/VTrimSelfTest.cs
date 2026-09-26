@@ -58,6 +58,7 @@ public static class VTrimSelfTest
                       database.ResolveProfile(null, "f_16a")?.FlightCategory == "Jet Plane",
                     "Telemetry profiles resolve aircraft across helicopter families");
                 Check(database.ResolveProfile("AH_64E", null)?.DisplayName == "AH-64E" &&
+                      database.ResolveProfile("f_16a", "ah_64e")?.DisplayName == "AH-64E" &&
                       database.ResolveProfile(null, null, "av_8b_plus")?.DisplayName == "AV-8B Plus" &&
                       database.ResolveProfile(null, null, "f_84f")?.DisplayName == "F-84F" &&
                       database.ResolveProfile(null, null, "dummy_plane") is null,
@@ -75,12 +76,27 @@ public static class VTrimSelfTest
                 string? repairedPath = repairCache.GetIconAsync(database.ResolveProfile(null, null, "ah_64e")!, CancellationToken.None)
                     .GetAwaiter().GetResult();
                 using var repairedIcon = repairedPath is null ? null : System.Drawing.Image.FromFile(repairedPath);
-                Check(repairedIcon?.Width == 2 && repairedIcon.Height == 2,
+                Check(repairedIcon is { Width: > 0, Height: > 0 },
                     "Missing or corrupt saved aircraft artwork is restored from the Wiki asset");
                 string? missingIconPath = repairCache.GetIconAsync(database.ResolveProfile(null, null, "av_8b_plus")!, CancellationToken.None)
                     .GetAwaiter().GetResult();
                 Check(missingIconPath is not null && File.Exists(missingIconPath),
                     "Previously missing aircraft artwork is added to the user's cache");
+                string cleanRoot = Path.Combine(aircraftRoot, "clean-install");
+                var packagedDatabase = new AircraftDatabaseService(cleanRoot, new OfflineAircraftProvider());
+                packagedDatabase.LoadLocalSnapshot();
+                Check(packagedDatabase.ResolveProfile(null, "ah_64e")?.DisplayName == "AH-64E" &&
+                    packagedDatabase.ResolveProfile(null, "av_8b_plus")?.DisplayName == "AV-8B Plus" &&
+                    packagedDatabase.ResolveProfile(null, "f_84f")?.DisplayName == "F-84F",
+                    "Packaged aircraft catalog resolves raw telemetry before network refresh");
+                var packagedIcons = new AircraftAssetCache(cleanRoot, http);
+                foreach (string id in new[] { "ah_64e", "av_8b_plus", "f_84f" })
+                {
+                    AircraftInfo? plane = packagedDatabase.ResolveProfile(null, id);
+                    string? artwork = plane is null ? null : packagedIcons.GetIconAsync(plane, CancellationToken.None)
+                        .GetAwaiter().GetResult();
+                    Check(artwork is not null && File.Exists(artwork), "Packaged artwork for " + id);
+                }
                 Check(!WarThunderTelemetry.TryGetAircraftIdentity("{\"valid\":true,\"type\":\"dummy_plane\"}",
                     "{\"valid\":true,\"IAS, km/h\":0}", out _),
                     "Telemetry placeholder does not create another aircraft profile");

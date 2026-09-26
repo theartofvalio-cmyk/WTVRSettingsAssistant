@@ -9,6 +9,7 @@ public partial class Form1
     private const int AutoProfileConfirmationReads = 3;
     private AircraftDatabaseService? _aircraftDatabase;
     private AircraftAssetCache? _aircraftAssets;
+    private bool _aircraftCatalogRefreshPending;
     private readonly HttpClient _aircraftHttp = new() { Timeout = TimeSpan.FromSeconds(30) };
     private string? _profileAircraftId;
     private string? _profileDetectedAircraftKey;
@@ -29,16 +30,33 @@ public partial class Form1
         if (_offlinePreview || _aircraftDatabase is not null) return;
         _aircraftDatabase = new(SettingsDirectory, new WarThunderWikiAircraftProvider(_aircraftHttp));
         _aircraftAssets = new(SettingsDirectory, _aircraftHttp);
-        _aircraftDatabase.Changed += () =>
+        int uiThread = Environment.CurrentManagedThreadId;
+        void ApplyCatalog()
         {
-            try { if (IsHandleCreated && !IsDisposed) BeginInvoke((Action)(() => { RepairExistingAircraftProfiles(); ReconcileActiveProfileAircraftMetadata(); UpdateProfileSummary(); AircraftProfilesChanged?.Invoke(); })); }
-            catch (InvalidOperationException) { }
-        };
+            if (IsDisposed || _loadingSavedSettings) { _aircraftCatalogRefreshPending = true; return; }
+            _aircraftCatalogRefreshPending = false;
+            RepairExistingAircraftProfiles();
+            ReconcileActiveProfileAircraftMetadata();
+            RefreshProfileList();
+        }
+        void ScheduleCatalog()
+        {
+            if (IsDisposed) return;
+            if (Environment.CurrentManagedThreadId == uiThread) { ApplyCatalog(); return; }
+            if (!IsHandleCreated) { _aircraftCatalogRefreshPending = true; return; }
+            try { BeginInvoke((Action)ApplyCatalog); }
+            catch (InvalidOperationException) { _aircraftCatalogRefreshPending = true; }
+        }
+        _aircraftDatabase.Changed += ScheduleCatalog;
+        HandleCreated += (_, _) => { if (_aircraftCatalogRefreshPending || _aircraftDatabase?.Items.Count > 0) ScheduleCatalog(); };
+        // Resolve telemetry before its first poll, including on a clean install.
+        _aircraftDatabase.LoadLocalSnapshot();
         _ = Task.Run(async () =>
         {
             try
             {
                 await _aircraftDatabase.InitializeAsync(_telemetryShutdown.Token);
+                ScheduleCatalog();
                 // Restore the original persistent local-icon workflow, but make it
                 // incremental: cached icons are reused immediately and only new,
                 // missing, corrupt or source-changed aircraft assets are downloaded.
@@ -66,12 +84,18 @@ public partial class Form1
                     File.ReadAllText(path), BindingsJsonOptions);
                 if (profile is null) continue;
                 AircraftInfo? aircraft = _aircraftDatabase.ResolveProfile(profile.AircraftId, profile.DetectedAircraftKey, name);
-                if (!BackfillAircraftId(profile, aircraft)) continue;
-                // Repair only identity metadata. Keep the user's controls, mode,
-                // profile name and saved detection key exactly as they were.
-                WriteProfile(name, profile);
+                string? canonicalName = CanonicalTelemetryProfileName(name, aircraft);
+                bool allowRename = canonicalName is not null &&
+                    !GetProfileNames().Any(other => !string.Equals(other, name, StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(other, canonicalName, StringComparison.OrdinalIgnoreCase));
+                string? repairedName = RepairSavedAircraftProfile(path, name, profile, aircraft, allowRename);
+                if (repairedName is null) continue;
                 if (string.Equals(name, _activeProfileName, StringComparison.OrdinalIgnoreCase))
+                {
                     _profileAircraftId = profile.AircraftId;
+                    if (!string.Equals(name, repairedName, StringComparison.Ordinal))
+                    { _activeProfileName = repairedName; WriteActiveProfileName(); }
+                }
             }
             catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException or UnauthorizedAccessException) { }
         }
@@ -82,6 +106,31 @@ public partial class Form1
         if (aircraft is null || string.Equals(profile.AircraftId, aircraft.Id, StringComparison.Ordinal)) return false;
         profile.AircraftId = aircraft.Id;
         return true;
+    }
+
+    private static string? RepairSavedAircraftProfile(string path, string name, SavedBindingsFile profile,
+        AircraftInfo? aircraft, bool allowRename)
+    {
+        bool metadataChanged = BackfillAircraftId(profile, aircraft);
+        string? canonicalName = allowRename ? CanonicalTelemetryProfileName(name, aircraft) : null;
+        if (!metadataChanged && canonicalName is null) return null;
+        // Keep the filename, ID, controls and saved mode. Backups preserve the
+        // previous profile if a write is interrupted.
+        profile.ProfileName = canonicalName ?? name;
+        profile.Version = Math.Max(profile.Version, 13);
+        profile.DampingSupport = NormalizeDampingSupport(profile.DampingSupport);
+        if (File.Exists(path) && !File.Exists(path + ".pre-1.3.1.bak"))
+            File.Copy(path, path + ".pre-1.3.1.bak", overwrite: false);
+        WriteTextWithBackupAtomic(path, JsonSerializer.Serialize(profile, BindingsJsonOptions));
+        return profile.ProfileName;
+    }
+
+    private static string? CanonicalTelemetryProfileName(string name, AircraftInfo? aircraft)
+    {
+        if (aircraft is null || string.Equals(name, aircraft.DisplayName, StringComparison.Ordinal)) return null;
+        // Rename only telemetry IDs; a user-chosen profile title stays theirs.
+        return string.Equals(AircraftSearchService.Normalize(name), AircraftSearchService.Normalize(aircraft.Id), StringComparison.Ordinal)
+            ? NormalizeProfileName(aircraft.DisplayName) : null;
     }
 
     private bool ChooseAircraftProfile(string initialName, string? initialAircraft, out string name, out string? aircraftId)
@@ -330,6 +379,8 @@ public partial class Form1
     {
         string key = NormalizeDetectedAircraftKey(detectedType);
         if (key.Length == 0 || _aircraftDatabase is null) return null;
+        AircraftInfo? exactId = _aircraftDatabase.GetById(detectedType);
+        if (exactId is not null) return exactId;
         var exact = _aircraftDatabase.Items.Where(aircraft =>
             string.Equals(AircraftSearchService.Normalize(aircraft.Id), key, StringComparison.Ordinal) ||
             string.Equals(AircraftSearchService.Normalize(aircraft.DisplayName), key, StringComparison.Ordinal) ||
@@ -431,6 +482,21 @@ public partial class Form1
                 legacy.PitchStep == 3.25M && legacy.UseCustomControls && legacy.HasCustomControlsSnapshot &&
                 !BackfillAircraftId(legacy, knownAircraft),
                 "Profile: aircraft metadata repair preserves saved controls and is idempotent");
+            Check(CanonicalTelemetryProfileName("ah_64e", knownAircraft) == "AH-64E" &&
+                CanonicalTelemetryProfileName("My Apache", knownAircraft) is null,
+                "Profile: raw telemetry title becomes aircraft name without renaming custom titles");
+            string oldAircraftPath = Path.Combine(folder, "ah_64e.json");
+            var oldAircraft = new SavedBindingsFile { ProfileName = "ah_64e", DetectedAircraftKey = "AH_64E",
+                PitchStep = 3.25M, UseCustomControls = true, HasCustomControlsSnapshot = true };
+            File.WriteAllText(oldAircraftPath, JsonSerializer.Serialize(oldAircraft, BindingsJsonOptions));
+            string? repairedName = RepairSavedAircraftProfile(oldAircraftPath, "ah_64e", oldAircraft, knownAircraft, true);
+            var persisted = JsonSerializer.Deserialize<SavedBindingsFile>(File.ReadAllText(oldAircraftPath), BindingsJsonOptions);
+            Check(repairedName == "AH-64E" && persisted?.ProfileName == "AH-64E" &&
+                persisted.AircraftId == "ah_64e" && persisted.DetectedAircraftKey == "AH_64E" &&
+                persisted.PitchStep == 3.25M && persisted.UseCustomControls && persisted.HasCustomControlsSnapshot &&
+                File.Exists(oldAircraftPath + ".pre-1.3.1.bak") &&
+                RepairSavedAircraftProfile(oldAircraftPath, "AH-64E", persisted, knownAircraft, true) is null,
+                "Profile: real saved-file migration repairs title and ID without losing settings");
         }
         catch (Exception ex) { failures.Add("Profile storage self-test: " + ex.Message); }
         finally { try { Directory.Delete(folder, recursive: true); } catch { } }

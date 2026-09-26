@@ -164,7 +164,7 @@ public partial class MainForm : Form
     // Change these to true later if you want to re-enable F12 layout editing and external layout files.
     private static readonly bool LayoutEditorEnabled = false;
     private static readonly bool LoadExternalLayoutFiles = false;
-    private const string CurrentVersion = "2.0.3";
+    private const string CurrentVersion = "2.0.4";
     private const string BuildChannelLabel = "";
     private const string GitHubLatestReleaseApi = "https://api.github.com/repos/theartofvalio-cmyk/WTVRSettingsAssistant/releases/latest";
     private const string GitHubReleasesApi = "https://api.github.com/repos/theartofvalio-cmyk/WTVRSettingsAssistant/releases?per_page=30";
@@ -3825,7 +3825,6 @@ render{
         bool keyBindAssistantActive = IsKeyBindAssistantSavedEnabled();
         _mainCanvas.AddImage("HiddenKeybindsButton", keyBindAssistantActive ? _hiddenKeybindsActiveImage : _hiddenKeybindsImage, new Rectangle(1516, 340, 81, 81), ToggleHiddenKeybindsPanel);
         _mainCanvas.SetItemToolTip("HiddenKeybindsButton", keyBindAssistantActive ? T("Home.Tooltip.Key.On") : T("Home.Tooltip.Key.Off"));
-        _mainCanvas.AddImage("UpdateButton", _updateGreen, new Rectangle(1516, 435, 81, 81), CheckForUpdatesFromButton);
 
         _mainCanvas.ApplyLayout(ParseBakedLayout(BakedMainLayoutJson));
         if (IllustratedTheme.Enabled) BuildIllustratedHome();
@@ -3885,7 +3884,6 @@ render{
         Nav("HiddenKeybindsButton", "KeyBind Assistant", IsKeyBindAssistantSavedEnabled() ? _hiddenKeybindsActiveImage! : _hiddenKeybindsImage!, 339, ToggleHiddenKeybindsPanel);
         Nav("OptionsIcon", "App Options", _settingsImage, 417, ShowApplicationOptionsDialog);
         Nav("InfoIcon", "Info", _infoImage, 495, () => ShowScreen(_aboutPanel));
-        Nav("UpdateButton", "Update App", _updateGreen, 573, CheckForUpdatesFromButton);
         _mainCanvas.AddImage("MainLogo", _mainLogo, new Rectangle(265, 100, 650, 650), ArmSecretCode);
         _mainCanvas.AddText("ModeHeading", "PLAY MODE", new Rectangle(970, 90, 570, 55), 28, FontStyle.Bold);
         _mainCanvas.AddImage("MonitorButton", _monitorOrange, new Rectangle(975, 175, 570, 142), ApplyMonitorMode);
@@ -4001,18 +3999,14 @@ render{
             _themeNavigation.BringToFront();
         }
 
-        // App Updates stays in the sidebar. War Thunder game updates are surfaced by
-        // the Home launch button when the selected server needs an update.
         (string Key, string Text, string Icon, Action Action)[] links = [
             ("home", T("Nav.Home"), "home", () => Navigate(() => ShowScreen(_mainPanel))),
             ("profiles", T("Nav.Profiles"), "folder", () => Navigate(() => ShowScreen(_settingsPanel))),
             ("neck", T("Nav.Neck"), "head", () => Navigate(ToggleNeckAssistPanel)),
             ("keybind", T("Nav.Keybind"), "keys", () => Navigate(ToggleHiddenKeybindsPanel)),
             ("vtrim", T("Nav.VTrim"), "trim", () => Navigate(OpenVTrim)),
-            ("vtrim-profiles", T("Nav.Profiles"), "folder", () => Navigate(() => { OpenVTrim(); _vtrimForm?.OpenAircraftProfiles(); })),
             ("options", T("Nav.Options"), "gear", ShowApplicationOptionsDialog),
-            ("info", T("Nav.Info"), "info", () => Navigate(() => ShowScreen(_aboutPanel))),
-            ("updates", T("Nav.Updates"), "download", CheckForUpdatesFromButton)];
+            ("info", T("Nav.Info"), "info", () => Navigate(() => ShowScreen(_aboutPanel)))];
         for (int i = 0; i < links.Length; i++)
         {
             var link = links[i];
@@ -4048,7 +4042,7 @@ render{
         int versionY = footerLineY + Math.Max(0, (footerHeight - S(8) - versionSize.Height) / 2);
         TextRenderer.DrawText(graphics, version, versionFont, new Point(versionX, versionY), IllustratedTheme.Ivory);
 
-        int statusRight = _aircraftHomeFilter?.Visible == true ? _aircraftHomeFilter.Left - S(16) : versionX - S(24);
+        int statusRight = versionX - S(24);
         int statusWidth = Math.Max(1, statusRight - S(28));
         int statusFontSize = S(18);
         int minimumStatusFontSize = Math.Max(12, S(13));
@@ -8166,11 +8160,6 @@ render{
             bool updateAvailable = AppUpdateVersion.IsNewer(current, latest);
             _latestReleaseUrl = releaseUrl;
 
-            if (_mainCanvas != null)
-            {
-                _mainCanvas.SetImage("UpdateButton", updateAvailable ? _updateYellow : _updateGreen);
-            }
-
             if (updateAvailable)
             {
                 if (string.IsNullOrWhiteSpace(updatePackageUrl))
@@ -8230,6 +8219,8 @@ render{
         Version latestVersion, bool interactive)
     {
         string? temporaryRoot = null;
+        Form? updateProgress = null;
+        Label? updateStatus = null;
 
         try
         {
@@ -8249,9 +8240,37 @@ render{
                 return false;
             }
 
+            SaveState();
+            updateProgress = new Form
+            {
+                Text = "War Thunder VR Assistant update",
+                ClientSize = new Size(460, 130),
+                StartPosition = FormStartPosition.CenterScreen,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                ControlBox = false,
+                ShowInTaskbar = true,
+                TopMost = true,
+                BackColor = Color.FromArgb(31, 33, 36),
+                ForeColor = Color.White
+            };
+            updateStatus = new Label
+            {
+                Text = $"Automatically updating to v{latestVersion}. Please wait; the app will restart.",
+                Bounds = new Rectangle(20, 22, 420, 55),
+                Font = new Font("Segoe UI", 11),
+                ForeColor = Color.White
+            };
+            updateProgress.Controls.Add(updateStatus);
+            updateProgress.Controls.Add(new ProgressBar
+            {
+                Style = ProgressBarStyle.Marquee,
+                MarqueeAnimationSpeed = 30,
+                Bounds = new Rectangle(20, 91, 420, 18)
+            });
+            updateProgress.Show();
+            updateProgress.Activate();
             UseWaitCursor = true;
             Enabled = false;
-            SaveState();
 
             temporaryRoot = Path.Combine(Path.GetTempPath(), "WTVRSettingsAssistantUpdate_" + Guid.NewGuid().ToString("N"));
             string zipPath = Path.Combine(temporaryRoot, "update.zip");
@@ -8273,13 +8292,18 @@ render{
                 if (!expectedDigest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase) ||
                     expectedDigest.Length != 71)
                     throw new InvalidDataException("GitHub returned an invalid update checksum.");
-                using FileStream packageStream = File.OpenRead(zipPath);
-                string actualDigest = Convert.ToHexString(SHA256.HashData(packageStream));
+                updateStatus.Text = "Verifying the update package…";
+                string actualDigest = await Task.Run(() =>
+                {
+                    using FileStream packageStream = File.OpenRead(zipPath);
+                    return Convert.ToHexString(SHA256.HashData(packageStream));
+                });
                 if (!string.Equals(actualDigest, expectedDigest[7..], StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException("The downloaded update does not match GitHub's checksum.");
             }
 
-            ZipFile.ExtractToDirectory(zipPath, extractPath, overwriteFiles: true);
+            updateStatus.Text = "Preparing the update for installation…";
+            await Task.Run(() => ZipFile.ExtractToDirectory(zipPath, extractPath, overwriteFiles: true));
 
             string executableName = UpdateExecutableName;
             string? packagedExecutable = Directory
@@ -8340,11 +8364,14 @@ render{
             }
 
             temporaryRoot = null; // The updater owns cleanup after this point.
+            updateStatus.Text = "Installing update and restarting…";
             Application.Exit();
             return true;
         }
         catch (Exception ex)
         {
+            updateProgress?.Close();
+            Enabled = true;
             if (interactive)
                 MessageBox.Show(this, "The update could not be installed. No application files were changed.\n\n" + ex.Message,
                     "Update failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -8355,6 +8382,7 @@ render{
         }
         finally
         {
+            updateProgress?.Dispose();
             Enabled = true;
             UseWaitCursor = false;
 

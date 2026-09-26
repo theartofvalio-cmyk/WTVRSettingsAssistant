@@ -105,6 +105,34 @@ internal sealed class AircraftDatabaseService
     internal static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true };
     public AircraftDatabaseService(string portableSettings, IAircraftDataProvider provider)
     { _directory = Path.Combine(portableSettings, "Aircraft"); _provider = provider; }
+    public void LoadLocalSnapshot()
+    {
+        if (_items.Length != 0) return;
+        try
+        {
+            string path = Path.Combine(_directory, "aircraft-index.json");
+            if (File.Exists(path))
+            {
+                var cached = JsonSerializer.Deserialize<AircraftInfo[]>(File.ReadAllText(path), JsonOptions);
+                Validate(cached);
+                _items = cached!;
+                return;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException or InvalidDataException)
+        { LastError = ex.Message; }
+        try
+        {
+            using Stream? seed = typeof(AircraftDatabaseService).Assembly.GetManifestResourceStream(
+                "HOTASTrimUtility.Assets.Aircraft.aircraft-index.json");
+            if (seed is null) return;
+            var bundled = JsonSerializer.Deserialize<AircraftInfo[]>(seed, JsonOptions);
+            Validate(bundled);
+            _items = bundled!;
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or InvalidDataException)
+        { LastError = ex.Message; }
+    }
     internal static readonly AircraftInfo[] UniversalAircraft = new[] { "Prop Plane", "Jet Plane", "Helicopter" }
         .Select(type => new AircraftInfo("universal-" + type.Replace(" ", "-").ToLowerInvariant(), "Universal " + type,
             "", type, new(), null, FlightCategory: type)).ToArray();
@@ -123,6 +151,10 @@ internal sealed class AircraftDatabaseService
     // profile has no AircraftId yet, but its detection key is the Wiki ID.
     public AircraftInfo? ResolveProfile(string? aircraftId, string? detectedKey, string? profileName = null)
     {
+        // A saved detection key comes from War Thunder itself. If older profile
+        // metadata points at a different aircraft, use telemetry to repair it.
+        AircraftInfo? telemetryId = GetById(detectedKey);
+        if (telemetryId is not null) return telemetryId;
         AircraftInfo? byId = GetById(aircraftId);
         if (byId is not null) return byId;
         // Existing auto-created profiles may have neither an AircraftId nor a
@@ -130,6 +162,8 @@ internal sealed class AircraftDatabaseService
         foreach (string? candidate in new[] { detectedKey, profileName })
         {
             if (string.IsNullOrWhiteSpace(candidate)) continue;
+            AircraftInfo? exactId = GetById(candidate);
+            if (exactId is not null) return exactId;
             string key = AircraftSearchService.Normalize(AircraftSearchService.CleanName(candidate));
             AircraftInfo[] matches = _items.Where(a =>
                 AircraftSearchService.Normalize(a.Id) == key ||
@@ -141,17 +175,8 @@ internal sealed class AircraftDatabaseService
     }
     public async Task InitializeAsync(CancellationToken token)
     {
-        try
-        {
-            string path = Path.Combine(_directory, "aircraft-index.json");
-            if (File.Exists(path))
-            {
-                var cached = JsonSerializer.Deserialize<AircraftInfo[]>(await File.ReadAllTextAsync(path, token), JsonOptions);
-                Validate(cached); _items = cached!; Changed?.Invoke();
-            }
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        { LastError = ex.Message; }
+        LoadLocalSnapshot();
+        if (_items.Length != 0) Changed?.Invoke();
         await RefreshAsync(token);
     }
     public async Task RefreshAsync(CancellationToken token)
@@ -315,7 +340,25 @@ internal sealed class AircraftAssetCache
 
         // Delete a corrupt local entry and obtain the current Wiki asset once.
         TryDelete(path);
+        if (kind == "Icons" && TryRestorePackagedIcon(id, path)) return path;
         return await DownloadAssetAsync(id, path, stampPath, uri, null, token);
+    }
+
+    private static bool TryRestorePackagedIcon(string id, string path)
+    {
+        using Stream? embedded = typeof(AircraftAssetCache).Assembly.GetManifestResourceStream(
+            "HOTASTrimUtility.Assets.Aircraft." + id + ".png");
+        if (embedded is null) return false;
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            string temporary = path + ".tmp";
+            using (FileStream output = File.Create(temporary)) embedded.CopyTo(output);
+            if (!TryValidateImage(temporary)) { TryDelete(temporary); return false; }
+            File.Move(temporary, path, true);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
     }
 
     private void ScheduleRefresh(string id, string path, string stampPath, Uri uri,

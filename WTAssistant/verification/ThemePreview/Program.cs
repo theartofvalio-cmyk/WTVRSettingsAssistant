@@ -19,25 +19,17 @@ internal static class Preview
         if (args.Contains("--footer-only"))
         {
             const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Instance;
-            using var filterProbe = new Panel { BackColor = Color.FromArgb(28, 31, 35) };
-            filterProbe.Controls.Add(new Label { Text = "Profiles:", ForeColor = Color.White, Bounds = new Rectangle(0, 3, 75, 30) });
-            filterProbe.Controls.Add(new TextBox { Bounds = new Rectangle(81, 7, 104, 25) });
-            filterProbe.Controls.Add(new Button { Text = "★", Bounds = new Rectangle(194, 1, 40, 36) });
-            main.Controls.Add(filterProbe);
-            typeof(MainForm).GetField("_aircraftHomeFilter", flags)!.SetValue(main, filterProbe);
+            if (typeof(MainForm).GetField("_aircraftHomeFilter", flags) is not null)
+                throw new Exception("The misplaced Home Profiles filter is still present.");
             typeof(MainForm).GetField("_showHomeAircraft", flags)!.SetValue(main, true);
             var layout = typeof(MainForm).GetMethod("LayoutAircraftHomeFilter", flags)!;
             foreach (Size size in new[] { new Size(1300, 800), new Size(1920, 1080) })
             {
                 main.ClientSize = size;
                 layout.Invoke(main, null);
-                if (!filterProbe.Visible || filterProbe.Left < size.Width / 2 ||
-                    filterProbe.Top < size.Height - 66 || filterProbe.Right >= size.Width - 80 ||
-                    filterProbe.Bottom > size.Height)
-                    throw new Exception("Home Profiles filter is outside its footer slot.");
                 Render(main, $"home-footer-{size.Width}");
             }
-            Console.WriteLine("PASS: Home Profiles filter stays beside the app version at both window sizes.");
+            Console.WriteLine("PASS: Home footer has no Profiles filter at either window size.");
             return;
         }
         foreach (string typeName in new[] { "ThemeButton", "ThemeCheckBox" })
@@ -123,17 +115,13 @@ internal static class Preview
         var aircraftHomeTest = (Control)typeof(MainForm).GetField("_aviationHome", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(main)!;
         using var testStrip = new Panel();
         aircraftHomeTest.GetType().GetMethod("SetAircraftProfiles")!.Invoke(aircraftHomeTest, [testStrip]);
-        using var testFilter = new Panel();
-        main.Controls.Add(testFilter);
-        typeof(MainForm).GetField("_aircraftHomeFilter", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(main, testFilter);
         var visibleSetting = typeof(MainForm).GetField("_showHomeAircraft", BindingFlags.NonPublic | BindingFlags.Instance)!;
         var updateHome = typeof(MainForm).GetMethod("LayoutAircraftHomeFilter", BindingFlags.NonPublic | BindingFlags.Instance)!;
         visibleSetting.SetValue(main, false); updateHome.Invoke(main, null);
-        if (testStrip.Visible || testFilter.Visible) throw new Exception("Hidden aircraft must also hide footer search/favorites");
+        if (testStrip.Visible) throw new Exception("Hidden aircraft must hide the Home strip");
         visibleSetting.SetValue(main, true); updateHome.Invoke(main, null);
-        if (!testStrip.Visible || !testFilter.Visible) throw new Exception("Aircraft visibility must restore both strip and filter");
-        typeof(MainForm).GetField("_aircraftHomeFilter", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(main, null);
-        Console.WriteLine("PASS: folded navigation, double-click expansion, Settings label, and Home strip/filter visibility.");
+        if (!testStrip.Visible) throw new Exception("Aircraft visibility must restore the Home strip");
+        Console.WriteLine("PASS: folded navigation, double-click expansion, Settings label, and Home strip visibility.");
         var neckField = typeof(MainForm).GetField("_neckAssistForm", BindingFlags.NonPublic | BindingFlags.Instance)!;
         using (var previewNeck = (Form)Activator.CreateInstance(typeof(MainForm).Assembly.GetType("WTVRSettingsAssistant.NeckAssistForm")!, [AppContext.BaseDirectory, true])!)
         {

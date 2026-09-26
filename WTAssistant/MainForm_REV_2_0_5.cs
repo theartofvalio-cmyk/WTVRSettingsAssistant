@@ -12,25 +12,10 @@ public partial class MainForm
     private readonly System.Windows.Forms.Timer _trimStateTimer = new() { Interval = 350 };
     private HOTASTrimUtility.Form1? _vtrimForm;
     private bool _vtrimNavigationExpanded;
-    private Control? _aircraftHomeFilter;
     private void LayoutAircraftHomeFilter()
     {
         _aviationHome?.SetAircraftProfilesVisible(_showHomeAircraft);
         LayoutControlProfileFooter();
-        if (_aircraftHomeFilter is null) return;
-        int S(float n) => Math.Max(1, (int)Math.Round(n * ThemeChromeScale));
-        _aircraftHomeFilter.Visible = _showHomeAircraft && _mainPanel.Visible && _vtrimForm?.Visible != true &&
-            _neckAssistForm?.Visible != true && _hiddenKeybindsForm?.Visible != true;
-        using Font versionFont = new("Segoe UI", Math.Max(S(20), S(24)), FontStyle.Bold, GraphicsUnit.Pixel);
-        string version = string.IsNullOrWhiteSpace(BuildChannelLabel) ? $"v {CurrentVersion}" : $"v {CurrentVersion} {BuildChannelLabel}";
-        int versionWidth = TextRenderer.MeasureText(version, versionFont, Size.Empty, TextFormatFlags.NoPadding).Width;
-        int width = S(240), height = S(38);
-        int versionLeft = ClientSize.Width - versionWidth - S(24);
-        int footerTop = ClientSize.Height - S(66) + S(8);
-        int footerContentHeight = S(66) - S(8);
-        _aircraftHomeFilter.SetBounds(versionLeft - S(24) - width,
-            footerTop + Math.Max(0, (footerContentHeight - height) / 2), width, height);
-        _aircraftHomeFilter.BringToFront();
     }
     private GameInstallations _installations = new();
     private bool _launchBusy, _versionStatusBusy, _versionRefreshPending;
@@ -229,8 +214,6 @@ public partial class MainForm
         _vtrimForm.Hide();
         var aircraftBrowser = _vtrimForm.CreateAircraftProfileBrowser(true);
         _aviationHome?.SetAircraftProfiles(aircraftBrowser);
-        _aircraftHomeFilter = aircraftBrowser.Tag as Control;
-        if (_aircraftHomeFilter is not null) Controls.Add(_aircraftHomeFilter);
         _mainPanel.VisibleChanged += (_, _) => LayoutAircraftHomeFilter();
         _vtrimForm.VisibleChanged += (_, _) => LayoutAircraftHomeFilter();
         LayoutAircraftHomeFilter();
