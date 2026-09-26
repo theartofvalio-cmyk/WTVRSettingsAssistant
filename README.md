@@ -1,6 +1,6 @@
 # War Thunder VR Assistant
 
-Windows companion app for War Thunder pilots using VR, HOTAS, and rudder pedals. Version **2.0.1**.
+Windows companion app for War Thunder pilots using VR, HOTAS, and rudder pedals. Version **2.0.2**.
 
 **[Website and setup guide](https://wtvrassistant.com/)** · **[Download the latest Windows release](https://github.com/theartofvalio-cmyk/WTVRSettingsAssistant/releases/latest)**
 

@@ -236,6 +236,11 @@ internal static class SelfTestRunner
             Check("App updater parses release tags",
                 AppUpdateVersion.ParseReleaseVersion("v2.1.1") == new Version(2, 1, 1) &&
                 AppUpdateVersion.ParseReleaseVersion("not-a-version") is null);
+            Check("App updater uses the ZIP app version when the GitHub build tag differs",
+                AppUpdateVersion.ReleaseAppVersion("v2.2", "WTVRSettingsAssistant-v2.0.2.zip") == new Version(2, 0, 2) &&
+                AppUpdateVersion.ReleaseAppVersion("v2.0.3", "WTVRSettingsAssistant-v2.0.3.zip") == new Version(2, 0, 3) &&
+                AppUpdateVersion.IsNewer(new Version(2, 0, 2), new Version(2, 0, 3)) &&
+                !AppUpdateVersion.IsNewer(new Version(2, 0, 2), new Version(2, 0, 2)));
 
             HashSet<string> xboxButtons = XInputController.CreatePressedForTest(0, 0x1000 | 0x0001);
             Check("Xbox binding token mapping", xboxButtons.Contains("XI:0:B1") &&

@@ -164,7 +164,7 @@ public partial class MainForm : Form
     // Change these to true later if you want to re-enable F12 layout editing and external layout files.
     private static readonly bool LayoutEditorEnabled = false;
     private static readonly bool LoadExternalLayoutFiles = false;
-    private const string CurrentVersion = "2.0.1";
+    private const string CurrentVersion = "2.0.2";
     private const string BuildChannelLabel = "";
     private const string GitHubLatestReleaseApi = "https://api.github.com/repos/theartofvalio-cmyk/WTVRSettingsAssistant/releases/latest";
     private const string GitHubReleasesApi = "https://api.github.com/repos/theartofvalio-cmyk/WTVRSettingsAssistant/releases?per_page=30";
@@ -8136,6 +8136,7 @@ render{
 
             string? updatePackageUrl = null;
             string? updatePackageDigest = null;
+            string? updatePackageName = null;
             if (release.TryGetProperty("assets", out JsonElement assetsElement) &&
                 assetsElement.ValueKind == JsonValueKind.Array)
             {
@@ -8153,10 +8154,11 @@ render{
                     .FirstOrDefault();
                 updatePackageUrl = updatePackage?.Url;
                 updatePackageDigest = updatePackage?.Digest;
+                updatePackageName = updatePackage?.Name;
             }
 
             if (!Version.TryParse(CurrentVersion, out Version? current) ||
-                AppUpdateVersion.ParseReleaseVersion(tag) is not Version latest)
+                AppUpdateVersion.ReleaseAppVersion(tag, updatePackageName) is not Version latest)
             {
                 throw new InvalidOperationException("GitHub returned an unrecognized version number.");
             }
