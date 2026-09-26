@@ -29,7 +29,54 @@ internal static class Preview
                 layout.Invoke(main, null);
                 Render(main, $"home-footer-{size.Width}");
             }
-            Console.WriteLine("PASS: Home footer has no Profiles filter at either window size.");
+            var footerNavigation = (Panel)typeof(MainForm).GetField("_themeNavigation", flags)!.GetValue(main)!;
+            var child = footerNavigation.Controls.OfType<Button>().Single(button =>
+                (string?)button.GetType().GetProperty("PageKey")?.GetValue(button) == "vtrim-profiles");
+            var trim = footerNavigation.Controls.OfType<Button>().Single(button => button.Text == "VTrim Assistant");
+            if (child.Visible) throw new Exception("VTrim Profiles submenu must start collapsed.");
+            var trimMouseDown = trim.GetType().GetMethod("OnMouseDown", flags)!;
+            trimMouseDown.Invoke(trim, [new MouseEventArgs(MouseButtons.Left, 1, 10, 10, 0)]);
+            trimMouseDown.Invoke(trim, [new MouseEventArgs(MouseButtons.Left, 1, 10, 10, 0)]);
+            if (!child.Visible || child.Top <= trim.Top) throw new Exception("VTrim double-click did not open its Profiles submenu.");
+            Render(main, "home-vtrim-profiles-expanded");
+            Console.WriteLine("PASS: footer filter removed and VTrim Profiles submenu expands.");
+            return;
+        }
+        if (args.Contains("--strip-only"))
+        {
+            string sandbox = Path.Combine(Path.GetTempPath(), "WTA-strip-preview-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                string profiles = Path.Combine(sandbox, "Profiles");
+                Directory.CreateDirectory(profiles);
+                foreach (string name in new[] { "AH-1G", "AH-64A", "AH-64E", "AV-8B Plus", "F-84F", "MiG-29 Sniper" })
+                    File.WriteAllText(Path.Combine(profiles, Uri.EscapeDataString(name) + ".json"),
+                        System.Text.Json.JsonSerializer.Serialize(new { ProfileName = name }));
+                File.WriteAllText(Path.Combine(profiles, "_active-profile.txt"), "F-84F");
+                using var trim = new HOTASTrimUtility.Form1(sandbox, embedded: true);
+                using var host = new Form { ClientSize = new Size(830, 145), ShowInTaskbar = false };
+                Control strip = trim.CreateAircraftProfileBrowser(true);
+                host.Controls.Add(strip);
+                Prepare(host);
+                Application.DoEvents();
+                var cards = Descendants(strip).Where(control => control.GetType().Name == "AircraftCard").ToArray();
+                var visible = cards.Where(card => card.Visible).ToArray();
+                if (cards.Length != 6 || visible.Length != 3 ||
+                    !visible.Any(card => (string?)card.Tag == "F-84F"))
+                    throw new Exception($"Home strip expected 3 cards including active F-84F; found {cards.Length} total, {visible.Length} visible.");
+                Render(host, "home-strip-three-active");
+                typeof(HOTASTrimUtility.Form1).GetField("_activeProfileName", BindingFlags.NonPublic | BindingFlags.Instance)!
+                    .SetValue(trim, "MiG-29 Sniper");
+                ((Delegate?)typeof(HOTASTrimUtility.Form1).GetField("AircraftProfileSelectionChanged", BindingFlags.NonPublic | BindingFlags.Instance)!
+                    .GetValue(trim))?.DynamicInvoke();
+                visible = cards.Where(card => card.Visible).ToArray();
+                if (visible.Length != 3 || !visible.Any(card => (string?)card.Tag == "MiG-29 Sniper" &&
+                    (bool)card.GetType().GetProperty("Active")!.GetValue(card)!))
+                    throw new Exception("Switching aircraft did not reveal and select its Home card.");
+                Render(host, "home-strip-switched-active");
+                Console.WriteLine("PASS: Home strip shows 3 aircraft and follows the active profile.");
+            }
+            finally { try { Directory.Delete(sandbox, recursive: true); } catch { } }
             return;
         }
         foreach (string typeName in new[] { "ThemeButton", "ThemeCheckBox" })

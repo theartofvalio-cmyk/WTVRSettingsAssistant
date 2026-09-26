@@ -164,7 +164,7 @@ public partial class MainForm : Form
     // Change these to true later if you want to re-enable F12 layout editing and external layout files.
     private static readonly bool LayoutEditorEnabled = false;
     private static readonly bool LoadExternalLayoutFiles = false;
-    private const string CurrentVersion = "2.0.4";
+    private const string CurrentVersion = "2.0.5";
     private const string BuildChannelLabel = "";
     private const string GitHubLatestReleaseApi = "https://api.github.com/repos/theartofvalio-cmyk/WTVRSettingsAssistant/releases/latest";
     private const string GitHubReleasesApi = "https://api.github.com/repos/theartofvalio-cmyk/WTVRSettingsAssistant/releases?per_page=30";
@@ -4005,6 +4005,7 @@ render{
             ("neck", T("Nav.Neck"), "head", () => Navigate(ToggleNeckAssistPanel)),
             ("keybind", T("Nav.Keybind"), "keys", () => Navigate(ToggleHiddenKeybindsPanel)),
             ("vtrim", T("Nav.VTrim"), "trim", () => Navigate(OpenVTrim)),
+            ("vtrim-profiles", T("Nav.Profiles"), "folder", () => Navigate(() => { OpenVTrim(); _vtrimForm?.OpenAircraftProfiles(); })),
             ("options", T("Nav.Options"), "gear", ShowApplicationOptionsDialog),
             ("info", T("Nav.Info"), "info", () => Navigate(() => ShowScreen(_aboutPanel)))];
         for (int i = 0; i < links.Length; i++)

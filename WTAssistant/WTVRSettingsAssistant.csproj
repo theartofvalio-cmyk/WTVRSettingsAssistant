@@ -13,9 +13,9 @@
     <AssemblyName>WTVRSettingsAssistant</AssemblyName>
     <RootNamespace>WTVRSettingsAssistant</RootNamespace>
     <ApplicationIcon>Icon.ico</ApplicationIcon>
-    <Version>2.0.4</Version>
-    <AssemblyVersion>2.0.4.0</AssemblyVersion>
-    <FileVersion>2.0.4.0</FileVersion>
+    <Version>2.0.5</Version>
+    <AssemblyVersion>2.0.5.0</AssemblyVersion>
+    <FileVersion>2.0.5.0</FileVersion>
     <!-- Keep Visual Studio / dotnet build output small. The release publish script
          supplies win-x86 + self-contained explicitly and creates a single-file app. -->
     <SelfContained>false</SelfContained>

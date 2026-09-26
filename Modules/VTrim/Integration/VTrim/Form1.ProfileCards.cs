@@ -107,14 +107,17 @@ public partial class Form1
                 for (int i = 0; i < commands.Count; i++)
                     commands[i].SetBounds(toolbar.Width - (commands.Count - i) * (buttonWidth + gap), S(stacked ? 48 : 4), buttonWidth, S(36));
                 int compactWidth = Math.Min(S(210), Math.Max(S(80), (int)(root.Height / .42f)));
-                int compactMinimum = Math.Min(compactWidth, S(170));
-                bool overflow = compact && cards.Count > Math.Max(1, (root.Width + gap) / (compactMinimum + gap));
+                // The Home strip should show three aircraft at normal desktop
+                // widths, including when Windows is scaled to 125% or 150%.
+                int compactMinimum = Math.Min(compactWidth, S(135));
+                int compactCapacity = Math.Min(3, Math.Max(1, (root.Width + gap) / (compactMinimum + gap)));
+                bool overflow = compact && cards.Count > compactCapacity;
                 previous.Visible = next.Visible = overflow;
                 int arrowWidth = overflow ? Math.Max(S(24), Math.Min(S(48), root.Width / 25)) : 0;
                 previous.SetBounds(0, 0, arrowWidth, root.Height);
                 next.SetBounds(root.Width - arrowWidth, 0, arrowWidth, root.Height);
                 viewport.SetBounds(arrowWidth, header, root.Width - arrowWidth * 2, Math.Max(0, root.Height - header));
-                visibleCount = compact ? Math.Max(1, (viewport.Width + gap) / (compactMinimum + gap)) : Math.Max(1, viewport.Width / S(230));
+                visibleCount = compact ? Math.Min(3, Math.Max(1, (viewport.Width + gap) / (compactMinimum + gap))) : Math.Max(1, viewport.Width / S(230));
                 int width = Math.Max(80, (viewport.ClientSize.Width - gap * (visibleCount - 1) - (compact ? 0 : SystemInformation.VerticalScrollBarWidth)) / visibleCount);
                 width = Math.Min(width, compact ? compactWidth : S(250));
                 int height = compact ? Math.Max(40, Math.Min(viewport.Height, (int)(width * .43))) : (int)(width * .42);
@@ -131,6 +134,15 @@ public partial class Form1
             }
             finally { arranging = false; }
         }
+        void RevealActiveCard()
+        {
+            if (!compact || cards.Count == 0) return;
+            int activeIndex = cards.FindIndex(card => card.Tag is string name &&
+                string.Equals(name, _activeProfileName, StringComparison.OrdinalIgnoreCase));
+            if (activeIndex < 0 || (activeIndex >= first && activeIndex < first + visibleCount)) return;
+            first = Math.Clamp(activeIndex - visibleCount / 2, 0, Math.Max(0, cards.Count - visibleCount));
+            Arrange();
+        }
         previous.Click += (_, _) => { first = Math.Max(0, first - visibleCount); Arrange(); };
         next.Click += (_, _) => { first = Math.Min(Math.Max(0, cards.Count - visibleCount), first + visibleCount); Arrange(); };
         if (compact)
@@ -143,7 +155,7 @@ public partial class Form1
                 Arrange();
             };
         }
-        root.SizeChanged += (_, _) => Arrange();
+        root.SizeChanged += (_, _) => { Arrange(); RevealActiveCard(); };
         toolbar.SizeChanged += (_, _) => Arrange();
         async void RefreshCards()
         {
@@ -244,6 +256,7 @@ public partial class Form1
                     add.Click += (_, _) => CreateProfile(); cards.Add(add); viewport.Controls.Add(add);
                 }
                 Arrange();
+                RevealActiveCard();
             }
             finally { viewport.ResumeLayout(true); }
             // Start visible-card artwork requests together. The asset cache limits
@@ -277,6 +290,7 @@ public partial class Form1
                     card.Active = string.IsNullOrEmpty(name)
                         ? string.IsNullOrWhiteSpace(_activeProfileName)
                         : string.Equals(name, _activeProfileName, StringComparison.OrdinalIgnoreCase);
+            RevealActiveCard();
             if (!compact)
             {
                 bool active = !string.IsNullOrWhiteSpace(_activeProfileName);
