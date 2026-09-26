@@ -108,19 +108,36 @@ internal sealed class AircraftDatabaseService
     internal static readonly AircraftInfo[] UniversalAircraft = new[] { "Prop Plane", "Jet Plane", "Helicopter" }
         .Select(type => new AircraftInfo("universal-" + type.Replace(" ", "-").ToLowerInvariant(), "Universal " + type,
             "", type, new(), null, FlightCategory: type)).ToArray();
-    public AircraftInfo? GetById(string? id) => _items.Concat(UniversalAircraft).FirstOrDefault(a => a.Id == id);
+    public AircraftInfo? GetById(string? id)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return null;
+        AircraftInfo[] all = _items.Concat(UniversalAircraft).ToArray();
+        AircraftInfo? exact = all.FirstOrDefault(a => string.Equals(a.Id, id, StringComparison.OrdinalIgnoreCase));
+        if (exact is not null) return exact;
+        // Older telemetry uses underscores where Wiki IDs sometimes use hyphens.
+        string key = AircraftSearchService.Normalize(id);
+        AircraftInfo[] matches = all.Where(a => AircraftSearchService.Normalize(a.Id) == key).ToArray();
+        return matches.Length == 1 ? matches[0] : null;
+    }
     // Telemetry can create a profile before the Wiki index has loaded. Such a
     // profile has no AircraftId yet, but its detection key is the Wiki ID.
-    public AircraftInfo? ResolveProfile(string? aircraftId, string? detectedKey)
+    public AircraftInfo? ResolveProfile(string? aircraftId, string? detectedKey, string? profileName = null)
     {
         AircraftInfo? byId = GetById(aircraftId);
-        if (byId is not null || string.IsNullOrWhiteSpace(detectedKey)) return byId;
-        string key = AircraftSearchService.Normalize(AircraftSearchService.CleanName(detectedKey));
-        AircraftInfo[] matches = _items.Where(a =>
-            AircraftSearchService.Normalize(a.Id) == key ||
-            AircraftSearchService.Normalize(a.DisplayName) == key ||
-            (a.SearchAliases?.Any(alias => AircraftSearchService.Normalize(alias) == key) ?? false)).ToArray();
-        return matches.Length == 1 ? matches[0] : null;
+        if (byId is not null) return byId;
+        // Existing auto-created profiles may have neither an AircraftId nor a
+        // detection key. Their saved name is often the original telemetry ID.
+        foreach (string? candidate in new[] { detectedKey, profileName })
+        {
+            if (string.IsNullOrWhiteSpace(candidate)) continue;
+            string key = AircraftSearchService.Normalize(AircraftSearchService.CleanName(candidate));
+            AircraftInfo[] matches = _items.Where(a =>
+                AircraftSearchService.Normalize(a.Id) == key ||
+                AircraftSearchService.Normalize(a.DisplayName) == key ||
+                (a.SearchAliases?.Any(alias => AircraftSearchService.Normalize(alias) == key) ?? false)).ToArray();
+            if (matches.Length == 1) return matches[0];
+        }
+        return null;
     }
     public async Task InitializeAsync(CancellationToken token)
     {
@@ -405,7 +422,8 @@ internal sealed class AircraftAssetCache
             using var image = Image.FromFile(path);
             return image.Width > 0 && image.Height > 0;
         }
-        catch (Exception ex) when (ex is IOException or ArgumentException or OutOfMemoryException) { return false; }
+        catch (Exception ex) when (ex is IOException or ArgumentException or OutOfMemoryException or
+            System.Runtime.InteropServices.ExternalException) { return false; }
     }
 
     private static AircraftAssetStamp? ReadStamp(string path)

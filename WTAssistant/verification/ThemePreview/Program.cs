@@ -16,6 +16,30 @@ internal static class Preview
         ApplicationConfiguration.Initialize();
         using MainForm main = new();
         Prepare(main);
+        if (args.Contains("--footer-only"))
+        {
+            const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Instance;
+            using var filterProbe = new Panel { BackColor = Color.FromArgb(28, 31, 35) };
+            filterProbe.Controls.Add(new Label { Text = "Profiles:", ForeColor = Color.White, Bounds = new Rectangle(0, 3, 75, 30) });
+            filterProbe.Controls.Add(new TextBox { Bounds = new Rectangle(81, 7, 104, 25) });
+            filterProbe.Controls.Add(new Button { Text = "★", Bounds = new Rectangle(194, 1, 40, 36) });
+            main.Controls.Add(filterProbe);
+            typeof(MainForm).GetField("_aircraftHomeFilter", flags)!.SetValue(main, filterProbe);
+            typeof(MainForm).GetField("_showHomeAircraft", flags)!.SetValue(main, true);
+            var layout = typeof(MainForm).GetMethod("LayoutAircraftHomeFilter", flags)!;
+            foreach (Size size in new[] { new Size(1300, 800), new Size(1920, 1080) })
+            {
+                main.ClientSize = size;
+                layout.Invoke(main, null);
+                if (!filterProbe.Visible || filterProbe.Left < size.Width / 2 ||
+                    filterProbe.Top < size.Height - 66 || filterProbe.Right >= size.Width - 80 ||
+                    filterProbe.Bottom > size.Height)
+                    throw new Exception("Home Profiles filter is outside its footer slot.");
+                Render(main, $"home-footer-{size.Width}");
+            }
+            Console.WriteLine("PASS: Home Profiles filter stays beside the app version at both window sizes.");
+            return;
+        }
         foreach (string typeName in new[] { "ThemeButton", "ThemeCheckBox" })
         {
             var type = typeof(MainForm).Assembly.GetType("WTVRSettingsAssistant." + typeName)!;

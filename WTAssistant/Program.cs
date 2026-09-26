@@ -164,7 +164,7 @@ public partial class MainForm : Form
     // Change these to true later if you want to re-enable F12 layout editing and external layout files.
     private static readonly bool LayoutEditorEnabled = false;
     private static readonly bool LoadExternalLayoutFiles = false;
-    private const string CurrentVersion = "2.0.2";
+    private const string CurrentVersion = "2.0.3";
     private const string BuildChannelLabel = "";
     private const string GitHubLatestReleaseApi = "https://api.github.com/repos/theartofvalio-cmyk/WTVRSettingsAssistant/releases/latest";
     private const string GitHubReleasesApi = "https://api.github.com/repos/theartofvalio-cmyk/WTVRSettingsAssistant/releases?per_page=30";
@@ -4048,8 +4048,8 @@ render{
         int versionY = footerLineY + Math.Max(0, (footerHeight - S(8) - versionSize.Height) / 2);
         TextRenderer.DrawText(graphics, version, versionFont, new Point(versionX, versionY), IllustratedTheme.Ivory);
 
-        int statusWidth = Math.Max(S(200), versionX - S(72));
-        if (_aircraftHomeFilter?.Visible == true) statusWidth = Math.Max(S(140), _aircraftHomeFilter.Left - S(42));
+        int statusRight = _aircraftHomeFilter?.Visible == true ? _aircraftHomeFilter.Left - S(16) : versionX - S(24);
+        int statusWidth = Math.Max(1, statusRight - S(28));
         int statusFontSize = S(18);
         int minimumStatusFontSize = Math.Max(12, S(13));
         while (statusFontSize > minimumStatusFontSize)

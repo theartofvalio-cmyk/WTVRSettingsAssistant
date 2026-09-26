@@ -201,7 +201,7 @@ public partial class Form1
                     // the full Profiles browser (double-click opens its trim editor),
                     // but do not advertise it as an aircraft on the compact main screen.
                     if (compact && IsCustomBaseProfileName(name)) continue;
-                    var aircraft = _aircraftDatabase?.ResolveProfile(profile.AircraftId, profile.DetectedAircraftKey);
+                    var aircraft = _aircraftDatabase?.ResolveProfile(profile.AircraftId, profile.DetectedAircraftKey, name);
                     if (favoritesOnly && !_favoriteAircraft.Contains(profile.AircraftId ?? profile.Id)) continue;
                     if (nation is not null && aircraft?.Nation != nation) continue;
                     if (category is not null && (aircraft?.FlightCategory ?? profile.AircraftType) != category) continue;
@@ -265,7 +265,8 @@ public partial class Form1
                     using var image = Image.FromFile(path);
                     item.Card.SetArtwork(new Bitmap(image));
                 }
-                catch (Exception ex) when (ex is OperationCanceledException or IOException or ArgumentException) { }
+                catch (Exception ex) when (ex is OperationCanceledException or IOException or ArgumentException or
+                    System.Runtime.InteropServices.ExternalException) { }
             }));
         }
         void RefreshSelection()

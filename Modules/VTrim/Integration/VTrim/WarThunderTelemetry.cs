@@ -40,7 +40,8 @@ internal static class WarThunderTelemetry
             // sessions from creating VTrim aircraft profiles.
             if (!Number(s, "IAS, km/h", out double speed) || speed < 0 || speed > 5000) return false;
             aircraftType = type.GetString()!.Trim();
-            return aircraftType.Length > 0;
+            // War Thunder reports this placeholder while no real aircraft is selected.
+            return aircraftType.Length > 0 && !aircraftType.Equals("dummy_plane", StringComparison.OrdinalIgnoreCase);
         }
         catch (JsonException) { return false; }
         catch (ArgumentException) { return false; }

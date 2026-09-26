@@ -440,7 +440,7 @@ public partial class Form1
         StartAircraftDatabase();
 
         SavedBindingsFile stored = ReadProfile(profileName);
-        AircraftInfo? aircraft = _aircraftDatabase?.ResolveProfile(stored.AircraftId, stored.DetectedAircraftKey);
+        AircraftInfo? aircraft = _aircraftDatabase?.ResolveProfile(stored.AircraftId, stored.DetectedAircraftKey, profileName);
 
         CloseAircraftControlEditor(showProfilesBrowser: false);
         _aircraftCurveRefreshers.Clear();

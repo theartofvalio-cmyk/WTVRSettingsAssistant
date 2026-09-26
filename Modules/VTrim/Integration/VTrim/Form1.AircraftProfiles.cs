@@ -31,7 +31,7 @@ public partial class Form1
         _aircraftAssets = new(SettingsDirectory, _aircraftHttp);
         _aircraftDatabase.Changed += () =>
         {
-            try { if (IsHandleCreated && !IsDisposed) BeginInvoke((Action)(() => { ReconcileActiveProfileAircraftMetadata(); UpdateProfileSummary(); AircraftProfilesChanged?.Invoke(); })); }
+            try { if (IsHandleCreated && !IsDisposed) BeginInvoke((Action)(() => { RepairExistingAircraftProfiles(); ReconcileActiveProfileAircraftMetadata(); UpdateProfileSummary(); AircraftProfilesChanged?.Invoke(); })); }
             catch (InvalidOperationException) { }
         };
         _ = Task.Run(async () =>
@@ -47,6 +47,41 @@ public partial class Form1
             catch (OperationCanceledException) { }
         });
         Disposed += (_, _) => _aircraftHttp.Dispose();
+    }
+
+    private void RepairExistingAircraftProfiles()
+    {
+        if (_aircraftDatabase is null || _aircraftDatabase.Items.Count == 0) return;
+        foreach (string name in GetProfileNames())
+        {
+            if (string.Equals(name, DefaultProfileDisplayName, StringComparison.OrdinalIgnoreCase) ||
+                IsCustomBaseProfileName(name)) continue;
+            try
+            {
+                // Leave damaged files to the existing backup recovery path. A
+                // metadata repair must never replace a user's controls with defaults.
+                string path = GetProfileFilePath(name);
+                if (!File.Exists(path)) continue;
+                SavedBindingsFile? profile = JsonSerializer.Deserialize<SavedBindingsFile>(
+                    File.ReadAllText(path), BindingsJsonOptions);
+                if (profile is null) continue;
+                AircraftInfo? aircraft = _aircraftDatabase.ResolveProfile(profile.AircraftId, profile.DetectedAircraftKey, name);
+                if (!BackfillAircraftId(profile, aircraft)) continue;
+                // Repair only identity metadata. Keep the user's controls, mode,
+                // profile name and saved detection key exactly as they were.
+                WriteProfile(name, profile);
+                if (string.Equals(name, _activeProfileName, StringComparison.OrdinalIgnoreCase))
+                    _profileAircraftId = profile.AircraftId;
+            }
+            catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException or UnauthorizedAccessException) { }
+        }
+    }
+
+    private static bool BackfillAircraftId(SavedBindingsFile profile, AircraftInfo? aircraft)
+    {
+        if (aircraft is null || string.Equals(profile.AircraftId, aircraft.Id, StringComparison.Ordinal)) return false;
+        profile.AircraftId = aircraft.Id;
+        return true;
     }
 
     private bool ChooseAircraftProfile(string initialName, string? initialAircraft, out string name, out string? aircraftId)
@@ -307,7 +342,8 @@ public partial class Form1
     {
         if (string.IsNullOrWhiteSpace(_activeProfileName)) return false;
         if (string.Equals(NormalizeDetectedAircraftKey(_profileDetectedAircraftKey), key, StringComparison.Ordinal)) return true;
-        return aircraft is not null && string.Equals(_profileAircraftId, aircraft.Id, StringComparison.Ordinal);
+        return aircraft is not null && string.Equals(NormalizeDetectedAircraftKey(_profileAircraftId),
+            NormalizeDetectedAircraftKey(aircraft.Id), StringComparison.Ordinal);
     }
 
     private string? FindProfileForDetectedAircraft(string key, AircraftInfo? aircraft)
@@ -320,9 +356,10 @@ public partial class Form1
             catch (Exception ex) when (ex is IOException or JsonException) { continue; }
             if (string.Equals(NormalizeDetectedAircraftKey(profile.DetectedAircraftKey), key, StringComparison.Ordinal))
                 return name;
-            if (aircraft is not null && string.Equals(profile.AircraftId, aircraft.Id, StringComparison.Ordinal))
+            if (aircraft is not null && string.Equals(NormalizeDetectedAircraftKey(profile.AircraftId),
+                NormalizeDetectedAircraftKey(aircraft.Id), StringComparison.Ordinal))
                 idMatch ??= name;
-            if (string.IsNullOrWhiteSpace(profile.AircraftId) &&
+            if (_aircraftDatabase?.GetById(profile.AircraftId) is null &&
                 string.Equals(AircraftSearchService.Normalize(name), key, StringComparison.Ordinal))
                 nameMatch ??= name;
         }
@@ -386,6 +423,14 @@ public partial class Form1
             Check(PrepareAircraftProfileForRuntime(stored, path).UseCustomControls &&
                 stored.HasCustomControlsSnapshot && stored.PitchStep == 4M,
                 "Profile: legacy aircraft migrates without losing custom controls");
+            var legacy = new SavedBindingsFile { ProfileName = "ah_64e", DetectedAircraftKey = "AH_64E",
+                PitchStep = 3.25M, UseCustomControls = true, HasCustomControlsSnapshot = true };
+            var knownAircraft = new AircraftInfo("ah_64e", "AH-64E", "usa", "Helicopter", new(), null);
+            Check(BackfillAircraftId(legacy, knownAircraft) && legacy.AircraftId == "ah_64e" &&
+                legacy.ProfileName == "ah_64e" && legacy.DetectedAircraftKey == "AH_64E" &&
+                legacy.PitchStep == 3.25M && legacy.UseCustomControls && legacy.HasCustomControlsSnapshot &&
+                !BackfillAircraftId(legacy, knownAircraft),
+                "Profile: aircraft metadata repair preserves saved controls and is idempotent");
         }
         catch (Exception ex) { failures.Add("Profile storage self-test: " + ex.Message); }
         finally { try { Directory.Delete(folder, recursive: true); } catch { } }

@@ -41,6 +41,9 @@ public static class VTrimSelfTest
                 AircraftInfo[] examples =
                 [
                     new("ah_1w", "AH-1W", "usa", "Helicopter", new(), null, FlightCategory: "Helicopter"),
+                    new("ah_64e", "AH-64E", "usa", "Helicopter", new(), null, FlightCategory: "Helicopter"),
+                    new("av_8b_plus", "AV-8B Plus", "usa", "Fighter", new(), null, FlightCategory: "Jet Plane"),
+                    new("f-84f", "F-84F", "usa", "Fighter", new(), null, FlightCategory: "Jet Plane"),
                     new("mi_24v", "Mi-24V", "ussr", "Helicopter", new(), null, FlightCategory: "Helicopter"),
                     new("f_16a", "F-16A", "usa", "Fighter", new(), null, FlightCategory: "Jet Plane")
                 ];
@@ -54,11 +57,33 @@ public static class VTrimSelfTest
                       database.ResolveProfile(null, "mi_24v")?.FlightCategory == "Helicopter" &&
                       database.ResolveProfile(null, "f_16a")?.FlightCategory == "Jet Plane",
                     "Telemetry profiles resolve aircraft across helicopter families");
+                Check(database.ResolveProfile("AH_64E", null)?.DisplayName == "AH-64E" &&
+                      database.ResolveProfile(null, null, "av_8b_plus")?.DisplayName == "AV-8B Plus" &&
+                      database.ResolveProfile(null, null, "f_84f")?.DisplayName == "F-84F" &&
+                      database.ResolveProfile(null, null, "dummy_plane") is null,
+                    "Existing profiles resolve IDs, case and punctuation without guessing unknown aircraft");
                 using var http = new HttpClient(new OfflineIconHandler());
                 var cache = new AircraftAssetCache(aircraftRoot, http);
                 string? iconPath = cache.GetIconAsync(database.ResolveProfile(null, "mi_24v")!, CancellationToken.None)
                     .GetAwaiter().GetResult();
                 Check(iconPath is not null && File.Exists(iconPath), "Resolved helicopter uses cached artwork offline");
+                using var png = new MemoryStream();
+                using (var icon = new System.Drawing.Bitmap(2, 2)) icon.Save(png, System.Drawing.Imaging.ImageFormat.Png);
+                File.WriteAllText(Path.Combine(aircraftRoot, "Aircraft", "Icons", "ah_64e.png"), "corrupt image");
+                using var repairHttp = new HttpClient(new RepairIconHandler(png.ToArray()));
+                var repairCache = new AircraftAssetCache(aircraftRoot, repairHttp);
+                string? repairedPath = repairCache.GetIconAsync(database.ResolveProfile(null, null, "ah_64e")!, CancellationToken.None)
+                    .GetAwaiter().GetResult();
+                using var repairedIcon = repairedPath is null ? null : System.Drawing.Image.FromFile(repairedPath);
+                Check(repairedIcon?.Width == 2 && repairedIcon.Height == 2,
+                    "Missing or corrupt saved aircraft artwork is restored from the Wiki asset");
+                string? missingIconPath = repairCache.GetIconAsync(database.ResolveProfile(null, null, "av_8b_plus")!, CancellationToken.None)
+                    .GetAwaiter().GetResult();
+                Check(missingIconPath is not null && File.Exists(missingIconPath),
+                    "Previously missing aircraft artwork is added to the user's cache");
+                Check(!WarThunderTelemetry.TryGetAircraftIdentity("{\"valid\":true,\"type\":\"dummy_plane\"}",
+                    "{\"valid\":true,\"IAS, km/h\":0}", out _),
+                    "Telemetry placeholder does not create another aircraft profile");
             }
             finally { Directory.Delete(aircraftRoot, recursive: true); }
 
@@ -121,5 +146,14 @@ public static class VTrimSelfTest
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token) =>
             throw new HttpRequestException("Cached icon should avoid the network");
+    }
+
+    private sealed class RepairIconHandler(byte[] png) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token) =>
+            Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(png)
+            });
     }
 }

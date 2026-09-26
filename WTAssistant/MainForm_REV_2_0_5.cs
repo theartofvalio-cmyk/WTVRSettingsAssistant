@@ -21,7 +21,15 @@ public partial class MainForm
         int S(float n) => Math.Max(1, (int)Math.Round(n * ThemeChromeScale));
         _aircraftHomeFilter.Visible = _showHomeAircraft && _mainPanel.Visible && _vtrimForm?.Visible != true &&
             _neckAssistForm?.Visible != true && _hiddenKeybindsForm?.Visible != true;
-        _aircraftHomeFilter.SetBounds(Padding.Left + S(150), ClientSize.Height - S(51), S(240), S(38));
+        using Font versionFont = new("Segoe UI", Math.Max(S(20), S(24)), FontStyle.Bold, GraphicsUnit.Pixel);
+        string version = string.IsNullOrWhiteSpace(BuildChannelLabel) ? $"v {CurrentVersion}" : $"v {CurrentVersion} {BuildChannelLabel}";
+        int versionWidth = TextRenderer.MeasureText(version, versionFont, Size.Empty, TextFormatFlags.NoPadding).Width;
+        int width = S(240), height = S(38);
+        int versionLeft = ClientSize.Width - versionWidth - S(24);
+        int footerTop = ClientSize.Height - S(66) + S(8);
+        int footerContentHeight = S(66) - S(8);
+        _aircraftHomeFilter.SetBounds(versionLeft - S(24) - width,
+            footerTop + Math.Max(0, (footerContentHeight - height) / 2), width, height);
         _aircraftHomeFilter.BringToFront();
     }
     private GameInstallations _installations = new();
