@@ -24,6 +24,26 @@ public static class VTrimSelfTest
 
         try
         {
+            foreach (int width in new[] { 120, 180, 240 })
+            {
+                using var card = new System.Drawing.Bitmap(width, 76);
+                using var artwork = new System.Drawing.Bitmap(30, 20);
+                using (var imageGraphics = System.Drawing.Graphics.FromImage(artwork))
+                    imageGraphics.Clear(System.Drawing.Color.Red);
+                using (var graphics = System.Drawing.Graphics.FromImage(card))
+                using (var font = new System.Drawing.Font("Segoe UI", 16, System.Drawing.FontStyle.Regular,
+                    System.Drawing.GraphicsUnit.Pixel))
+                    AircraftCard.PaintCompactAircraft(graphics, new System.Drawing.Rectangle(0, 0, width, 76),
+                        "MiG-29 Sniper", artwork, false, false, font);
+                var redPixels = Enumerable.Range(0, card.Height)
+                    .SelectMany(y => Enumerable.Range(0, card.Width)
+                        .Where(x => { var pixel = card.GetPixel(x, y); return pixel.R > 180 && pixel.G < 80 && pixel.B < 80; })
+                        .Select(x => new System.Drawing.Point(x, y))).ToArray();
+                Check(redPixels.Length > 0 && redPixels.Min(point => point.Y) >= 24 &&
+                    Math.Abs((redPixels.Min(point => point.X) + redPixels.Max(point => point.X)) / 2.0 - (width - 1) / 2.0) <= 1,
+                    $"Compact Home artwork stays centered below its title at {width}px");
+            }
+
             foreach (string language in new[] { "en", "bg", "es", "de", "fr", "pt", "pl", "ru", "uk", "tr", "el", "ro", "he", "zh-Hans" })
             foreach (string key in new[] { "Profiles.Section.TrimKeybinds", "Profiles.Section.AxisCurves", "Profiles.Section.FlightLocked" })
                 Check(VTrimTranslations.TryGet(language, key, out string? label) &&

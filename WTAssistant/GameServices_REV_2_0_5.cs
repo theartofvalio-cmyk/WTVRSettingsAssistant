@@ -62,7 +62,7 @@ internal sealed class GameServices : IDisposable
     internal GameServices(HttpMessageHandler handler)
     {
         _http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10), MaxResponseContentBufferSize = 2 * 1024 * 1024 };
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd("WTAssistant/2.0.6");
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd("WTAssistant/2.0.7");
     }
 
     internal static Version? ParseVersion(string? text)

@@ -15,6 +15,7 @@ internal sealed class AviationHomePage : UserControl
     private readonly Panel _webLoadingCover;
     private bool _webReady;
     private string? _lastWebState;
+    private double[]? _webHeroMetrics;
     private bool _webFallbackLocked;
     private System.Windows.Forms.Timer? _webInitWatchdog;
     private Control? _desktopProfileSelector;
@@ -382,6 +383,21 @@ internal sealed class AviationHomePage : UserControl
                 try { message = e.TryGetWebMessageAsString(); }
                 catch { return; }
 
+                if (message.StartsWith("hero-bounds:", StringComparison.Ordinal))
+                {
+                    try
+                    {
+                        double[]? metrics = JsonSerializer.Deserialize<double[]>(message[12..]);
+                        if (metrics is { Length: 4 } && metrics[3] > 0)
+                        {
+                            _webHeroMetrics = metrics;
+                            if (_webReady) Arrange();
+                        }
+                    }
+                    catch (JsonException) { }
+                    return;
+                }
+
                 switch (message)
                 {
                     case "monitor": monitor(); break;
@@ -681,6 +697,13 @@ body::before { content:""; position:fixed; inset:0; pointer-events:none; opacity
 const launchImages={normal:'{{launchNormal}}',update:'{{launchUpdate}}',running:'{{launchRunning}}'};
 const serverImages={live:'{{liveIcon}}',liveActive:'{{liveActiveIcon}}',test:'{{testIcon}}',testActive:'{{testActiveIcon}}'};
 const post=x=>window.chrome.webview.postMessage(x);
+const postHeroBounds=()=>{
+  const hero=document.getElementById('hero').getBoundingClientRect();
+  const right=document.getElementById('right').getBoundingClientRect();
+  post('hero-bounds:'+JSON.stringify([hero.left,hero.right,right.left,window.innerWidth]));
+};
+window.addEventListener('resize',()=>requestAnimationFrame(postHeroBounds));
+requestAnimationFrame(postHeroBounds);
 const clickMap={serverLive:'server-live',serverTest:'server-test',monitor:'monitor',vr:'vr',neck:'neck',keybind:'keybind',vtrim:'vtrim',launch:'launch',discord:'discord',youtube:'youtube',support:'support'};
 for(const [id,msg] of Object.entries(clickMap)) {
   const el=document.getElementById(id); el.tabIndex=0; el.setAttribute('role','button');
@@ -917,6 +940,13 @@ window.wtApplyState=s=>{
                     heroLeft = (int)Math.Round(padding);
                     heroRight = (int)Math.Round(padding + heroWidth);
                     heroCenter = (heroLeft + heroRight) / 2;
+                    if (_webHeroMetrics is { Length: 4 } metrics && metrics[3] > 0)
+                    {
+                        double webScale = ClientSize.Width / metrics[3];
+                        heroLeft = (int)Math.Round(metrics[0] * webScale);
+                        heroRight = (int)Math.Round(Math.Min(metrics[1], metrics[2] - 8) * webScale);
+                        heroCenter = (heroLeft + heroRight) / 2;
+                    }
                 }
                 int stripWidth = Math.Min(S(520), Math.Max(180, heroRight - heroLeft - S(16)));
                 int stripX = Math.Clamp(heroCenter - stripWidth / 2, heroLeft, Math.Max(heroLeft, heroRight - stripWidth));

@@ -13,11 +13,11 @@
     <AssemblyName>WTVRSettingsAssistant</AssemblyName>
     <RootNamespace>WTVRSettingsAssistant</RootNamespace>
     <ApplicationIcon>Icon.ico</ApplicationIcon>
-    <Version>2.0.6</Version>
-    <InformationalVersion>2.0.6</InformationalVersion>
+    <Version>2.0.7</Version>
+    <InformationalVersion>2.0.7</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
-    <AssemblyVersion>2.0.6.0</AssemblyVersion>
-    <FileVersion>2.0.6.0</FileVersion>
+    <AssemblyVersion>2.0.7.0</AssemblyVersion>
+    <FileVersion>2.0.7.0</FileVersion>
     <!-- Keep Visual Studio / dotnet build output small. The release publish script
          supplies win-x86 + self-contained explicitly and creates a single-file app. -->
     <SelfContained>false</SelfContained>

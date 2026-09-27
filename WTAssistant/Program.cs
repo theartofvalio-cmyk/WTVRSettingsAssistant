@@ -8239,7 +8239,8 @@ render{
             updateProgress = new Form
             {
                 Text = "War Thunder VR Assistant update",
-                ClientSize = new Size(460, 130),
+                ClientSize = new Size(680, 210),
+                AutoScaleMode = AutoScaleMode.Dpi,
                 StartPosition = FormStartPosition.CenterScreen,
                 FormBorderStyle = FormBorderStyle.FixedDialog,
                 ControlBox = false,
@@ -8251,17 +8252,30 @@ render{
             updateStatus = new Label
             {
                 Text = $"Automatically updating to v{latestVersion}. Please wait; the app will restart.",
-                Bounds = new Rectangle(20, 22, 420, 55),
+                Dock = DockStyle.Fill,
                 Font = new Font("Segoe UI", 11),
-                ForeColor = Color.White
+                ForeColor = Color.White,
+                TextAlign = ContentAlignment.MiddleLeft
             };
-            updateProgress.Controls.Add(updateStatus);
-            updateProgress.Controls.Add(new ProgressBar
+            TableLayoutPanel progressLayout = new()
             {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(28, 24, 28, 24),
+                ColumnCount = 1,
+                RowCount = 2
+            };
+            progressLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            progressLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            progressLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+            progressLayout.Controls.Add(updateStatus, 0, 0);
+            progressLayout.Controls.Add(new ProgressBar
+            {
+                Dock = DockStyle.Fill,
                 Style = ProgressBarStyle.Marquee,
                 MarqueeAnimationSpeed = 30,
-                Bounds = new Rectangle(20, 91, 420, 18)
-            });
+                Margin = Padding.Empty
+            }, 0, 1);
+            updateProgress.Controls.Add(progressLayout);
             updateProgress.Show();
             updateProgress.Activate();
             UseWaitCursor = true;

@@ -265,8 +265,8 @@ internal static class SelfTestRunner
             foreach (LanguageOption language in AppText.Languages)
             {
                 string notes = AppText.T(language.Code, "Info.ChangesText");
-                releaseOnlyNotes &= notes.Contains("Hover UP", StringComparison.Ordinal) &&
-                    notes.Contains("RUNNING", StringComparison.Ordinal) &&
+                releaseOnlyNotes &= notes == ReleaseNotes.ForLanguage(language.Code) &&
+                    !string.IsNullOrWhiteSpace(notes) &&
                     !notes.Contains("v1.0", StringComparison.OrdinalIgnoreCase) &&
                     !notes.Contains("v2.0.1", StringComparison.OrdinalIgnoreCase);
             }
