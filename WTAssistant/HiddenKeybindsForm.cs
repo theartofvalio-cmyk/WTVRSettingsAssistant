@@ -10,6 +10,9 @@ internal sealed class HiddenKeybindSettings
     public string VrHeadPositionUpBinding { get; set; } = "Not assigned";
     public string VrHeadPositionDownBinding { get; set; } = "Not assigned";
     public string SwitchMapToBattlefieldBinding { get; set; } = "Not assigned";
+    public string HoverUpBinding { get; set; } = "Not assigned";
+    public string HoverDownBinding { get; set; } = "Not assigned";
+    public string ScoreBoardMouseFixBinding { get; set; } = "Not assigned";
 }
 
 internal sealed class HiddenKeybindsForm : Form
@@ -66,6 +69,10 @@ internal sealed class HiddenKeybindsForm : Form
     [DllImport("user32.dll")]
     private static extern uint MapVirtualKey(uint code, uint mapType);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetCursorPos(int x, int y);
+
     private const uint InputKeyboard = 1;
     private const uint KeyEventKeyUp = 0x0002;
     private const uint KeyEventExtendedKey = 0x0001;
@@ -78,6 +85,12 @@ internal sealed class HiddenKeybindsForm : Form
     private readonly Button _upBinding;
     private readonly Button _downBinding;
     private readonly Button _mapBinding;
+    private readonly Button _hoverUpBinding;
+    private readonly Button _hoverDownBinding;
+    private readonly Button _scoreBoardBinding;
+    private readonly HashSet<string> _heldOutputs = new();
+    private readonly System.Windows.Forms.Timer _scoreBoardCorrection = new() { Interval = 60 };
+    private Point _scoreBoardTarget;
     private readonly AdvancedSwitchService _advancedSwitchService;
     private readonly ThemeCheckBox _advancedSwitchToggle;
     private readonly Button _manageSwitchesButton;
@@ -99,6 +112,12 @@ internal sealed class HiddenKeybindsForm : Form
         ["VR Head Position Up"] = "Keybind.HeadUp",
         ["VR Head Position Down"] = "Keybind.HeadDown",
         ["Switch map to battlefield"] = "Keybind.Map",
+        ["Hover UP"] = "Keybind.HoverUp",
+        ["Hover Down"] = "Keybind.HoverDown",
+        ["Score Board Mouse Fix"] = "Keybind.ScoreBoardMouseFix",
+        ["Left Shift"] = "Keybind.LeftShift",
+        ["Left Ctrl"] = "Keybind.LeftCtrl",
+        ["Mouse to top-left"] = "Keybind.MouseTopLeft",
         ["ADVANCED SWITCH BINDINGS"] = "Switch.AdvancedBindings",
         ["Advanced Switch Bindings"] = "Switch.AdvancedBindings",
         ["Create custom switch positions and map each position to a keyboard key or mouse button."] = "Keybind.AdvancedDescription",
@@ -149,6 +168,11 @@ internal sealed class HiddenKeybindsForm : Form
         enabled.CheckedChanged += (_, _) =>
         {
             _settings.Enabled = enabled.Checked;
+            if (!enabled.Checked)
+            {
+                ReleaseHeldOutputs();
+                _scoreBoardCorrection.Stop();
+            }
             _wasPressed.Clear();
             _status!.Text = enabled.Checked ? T("Keybind.EnabledStatus") : T("Keybind.OffStatus");
             SaveSettings();
@@ -169,7 +193,7 @@ internal sealed class HiddenKeybindsForm : Form
         Controls.Add(home);
 
         Panel table = new() { BackColor = ThemePalette.FromArgb(9, 22, 25), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
-        table.SetBounds(30, 245, Math.Max(600, ClientSize.Width - 60), 282);
+        table.SetBounds(30, 245, Math.Max(600, ClientSize.Width - 60), 506);
         Controls.Add(table);
         table.Resize += (_, _) => LayoutRows(table);
 
@@ -179,16 +203,25 @@ internal sealed class HiddenKeybindsForm : Form
         actionHeader.Name = "ActionHeader"; keyHeader.Name = "KeyHeader"; hotasHeader.Name = "HotasHeader";
         table.Controls.AddRange(new Control[] { actionHeader, keyHeader, hotasHeader });
 
-        (_upBinding, Button upClear) = AddBindingRow(table, "VR Head Position Up", "Page Up  (PGUP)", 0, () => _settings.VrHeadPositionUpBinding, value => _settings.VrHeadPositionUpBinding = value);
-        (_downBinding, Button downClear) = AddBindingRow(table, "VR Head Position Down", "Page Down  (PGDN)", 1, () => _settings.VrHeadPositionDownBinding, value => _settings.VrHeadPositionDownBinding = value);
-        (_mapBinding, Button mapClear) = AddBindingRow(table, "Switch map to battlefield", "N", 2, () => _settings.SwitchMapToBattlefieldBinding, value => _settings.SwitchMapToBattlefieldBinding = value);
+        (_upBinding, _) = AddBindingRow(table, "VR Head Position Up", "Page Up  (PGUP)", 0, "up", () => _settings.VrHeadPositionUpBinding, value => _settings.VrHeadPositionUpBinding = value);
+        (_downBinding, _) = AddBindingRow(table, "VR Head Position Down", "Page Down  (PGDN)", 1, "down", () => _settings.VrHeadPositionDownBinding, value => _settings.VrHeadPositionDownBinding = value);
+        (_mapBinding, _) = AddBindingRow(table, "Switch map to battlefield", "N", 2, "map", () => _settings.SwitchMapToBattlefieldBinding, value => _settings.SwitchMapToBattlefieldBinding = value);
+        (_hoverUpBinding, _) = AddBindingRow(table, "Hover UP", "Left Shift", 3, "hoverUp", () => _settings.HoverUpBinding, value => _settings.HoverUpBinding = value);
+        (_hoverDownBinding, _) = AddBindingRow(table, "Hover Down", "Left Ctrl", 4, "hoverDown", () => _settings.HoverDownBinding, value => _settings.HoverDownBinding = value);
+        (_scoreBoardBinding, _) = AddBindingRow(table, "Score Board Mouse Fix", "Mouse to top-left", 5, "scoreBoard", () => _settings.ScoreBoardMouseFixBinding, value => _settings.ScoreBoardMouseFixBinding = value);
+
+        Label scoreBoardHint = MakeLabel(T("Keybind.ScoreBoardHint"), 10.5f, FontStyle.Regular, IllustratedTheme.Gold);
+        scoreBoardHint.SetBounds(32, 756, Math.Max(600, ClientSize.Width - 64), 52);
+        scoreBoardHint.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        UiLanguage.Bind(scoreBoardHint, "Keybind.ScoreBoardHint", _languageCode);
+        Controls.Add(scoreBoardHint);
 
         Panel advancedPanel = new()
         {
             BackColor = IllustratedTheme.Panel,
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
         };
-        advancedPanel.SetBounds(30, 544, Math.Max(600, ClientSize.Width - 60), 116);
+        advancedPanel.SetBounds(30, 820, Math.Max(600, ClientSize.Width - 60), 116);
         Controls.Add(advancedPanel);
         advancedPanel.Paint += (_, e) => IllustratedTheme.DrawFrame(e.Graphics, new Rectangle(2, 2, advancedPanel.Width - 5, advancedPanel.Height - 5), true);
 
@@ -216,20 +249,30 @@ internal sealed class HiddenKeybindsForm : Form
         _advancedSwitchService.StatusChanged += OnAdvancedStatusChanged;
 
         _status = MakeLabel(_settings.Enabled ? T("Keybind.EnabledStatus") : T("Keybind.OffStatus"), 11, FontStyle.Regular, ThemePalette.FromArgb(90, 238, 140));
-        _status.SetBounds(32, 680, 1320, 34);
+        _status.SetBounds(32, 956, 1320, 34);
         _status.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         Controls.Add(_status);
 
         Label notice = MakeLabel("Important: keep War Thunder VR Assistant running while using these bindings. If War Thunder runs as administrator, run this app as administrator too so the keyboard commands can reach the game.", 10.5f, FontStyle.Italic, ThemePalette.FromArgb(255, 190, 70));
-        notice.SetBounds(32, 724, 1320, 48);
+        notice.SetBounds(32, 1000, 1320, 48);
         notice.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         Controls.Add(notice);
+        AutoScroll = true;
+        AutoScrollMinSize = new Size(0, 1060);
 
         _poll.Tick += (_, _) => PollBindings();
+        _scoreBoardCorrection.Tick += (_, _) =>
+        {
+            _scoreBoardCorrection.Stop();
+            if (_settings.Enabled) SetCursorPos(_scoreBoardTarget.X, _scoreBoardTarget.Y);
+        };
         _poll.Start(); // Advanced switch mappings remain active even when this embedded page is hidden.
         FormClosed += (_, _) =>
         {
             _poll.Stop();
+            _scoreBoardCorrection.Stop();
+            _scoreBoardCorrection.Dispose();
+            ReleaseHeldOutputs();
             _advancedSwitchService.StatusChanged -= OnAdvancedStatusChanged;
             SaveSettings();
             _advancedSwitchService.Dispose();
@@ -243,6 +286,7 @@ internal sealed class HiddenKeybindsForm : Form
             description.Width = Math.Min(1320, Math.Max(760, contentWidth - 180));
             _status.Width = contentWidth;
             notice.Width = contentWidth;
+            scoreBoardHint.Width = contentWidth;
             table.Width = contentWidth;
             advancedPanel.Width = contentWidth;
             advancedDescription.Width = Math.Max(280, advancedPanel.Width - 500);
@@ -300,8 +344,9 @@ internal sealed class HiddenKeybindsForm : Form
                 title.SetBounds(S(136), S(18), ClientSize.Width-S(166), S(70));
                 description.SetBounds(margin,S(110),full,S(76));
                 enabled.SetBounds(margin,S(192),full,S(40));
-                table.SetBounds(margin,S(245),full,S(300));
-                int advancedY = table.Bottom + S(16);
+                table.SetBounds(margin,S(245),full,S(506));
+                scoreBoardHint.SetBounds(margin,table.Bottom+S(8),full,S(54));
+                int advancedY = scoreBoardHint.Bottom + S(14);
                 advancedPanel.SetBounds(margin,advancedY,full,S(166));
                 int split = (int)(full * .56f);
                 int rightX = split + S(24);
@@ -315,7 +360,7 @@ internal sealed class HiddenKeybindsForm : Form
                 advancedPanel.Height = Math.Max(S(166), _manageSwitchesButton.Bottom + S(16));
                 _status.SetBounds(margin,advancedPanel.Bottom+S(10),full,S(44));
                 notice.SetBounds(margin,_status.Bottom+S(8),full,S(70));
-                AutoScroll=false; AutoScrollMinSize=Size.Empty;
+                AutoScrollMinSize = new Size(0, notice.Bottom + S(18));
                 ScaleFonts();
                 LayoutRows(table);
             }
@@ -333,6 +378,9 @@ internal sealed class HiddenKeybindsForm : Form
         _upBinding.Text = FormatBinding(_settings.VrHeadPositionUpBinding);
         _downBinding.Text = FormatBinding(_settings.VrHeadPositionDownBinding);
         _mapBinding.Text = FormatBinding(_settings.SwitchMapToBattlefieldBinding);
+        _hoverUpBinding.Text = FormatBinding(_settings.HoverUpBinding);
+        _hoverDownBinding.Text = FormatBinding(_settings.HoverDownBinding);
+        _scoreBoardBinding.Text = FormatBinding(_settings.ScoreBoardMouseFixBinding);
         Text = T("Nav.Keybind");
         _status.Text = _settings.Enabled ? T("Keybind.EnabledStatus") : T("Keybind.OffStatus");
     }
@@ -353,7 +401,7 @@ internal sealed class HiddenKeybindsForm : Form
         catch (InvalidOperationException) { }
     }
 
-    private (Button Bind, Button Clear) AddBindingRow(Panel table, string action, string key, int row, Func<string> getBinding, Action<string> setBinding)
+    private (Button Bind, Button Clear) AddBindingRow(Panel table, string action, string key, int row, string id, Func<string> getBinding, Action<string> setBinding)
     {
         Label actionLabel = MakeLabel(action, 12.5f, FontStyle.Bold, Color.White);
         actionLabel.Name = "Action" + row;
@@ -366,6 +414,7 @@ internal sealed class HiddenKeybindsForm : Form
             string localizedAction = LocalizedTextKeys.TryGetValue(action, out string? actionKey) ? AppText.T(_languageCode, actionKey) : action;
             using HotasBindingDialog dialog = new(string.Format(System.Globalization.CultureInfo.CurrentCulture, T("Keybind.CapturePrompt"), localizedAction), _languageCode);
             if (dialog.ShowDialog(this) != DialogResult.OK || string.IsNullOrWhiteSpace(dialog.Binding)) return;
+            ReleaseBinding(id);
             setBinding(dialog.Binding);
             bind.Text = FormatBinding(dialog.Binding);
             SaveSettings();
@@ -374,9 +423,9 @@ internal sealed class HiddenKeybindsForm : Form
         clear.Name = "Clear" + row;
         clear.Click += (_, _) =>
         {
+            ReleaseBinding(id);
             setBinding("Not assigned");
             bind.Text = FormatBinding("Not assigned");
-            _wasPressed.Remove(row switch { 0 => "up", 1 => "down", _ => "map" });
             SaveSettings();
         };
         table.Controls.AddRange(new Control[] { actionLabel, keyLabel, bind, clear });
@@ -438,7 +487,7 @@ internal sealed class HiddenKeybindsForm : Form
             }
             ResponsiveFonts.Set(heading, size, FontStyle.Bold, GraphicsUnit.Point);
         }
-        for (int row = 0; row < 3; row++)
+        for (int row = 0; row < 6; row++)
         {
             int y = S(60 + row * 74);
             int h = S(44);
@@ -454,12 +503,16 @@ internal sealed class HiddenKeybindsForm : Form
         _advancedSwitchService.Poll();
         if (!_settings.Enabled)
         {
+            if (_heldOutputs.Count > 0) ReleaseHeldOutputs();
             _wasPressed.Clear();
             return;
         }
         PollBinding("up", _settings.VrHeadPositionUpBinding, Keys.PageUp);
         PollBinding("down", _settings.VrHeadPositionDownBinding, Keys.PageDown);
         PollBinding("map", _settings.SwitchMapToBattlefieldBinding, Keys.N);
+        PollHeldBinding("hoverUp", _settings.HoverUpBinding, Keys.LShiftKey);
+        PollHeldBinding("hoverDown", _settings.HoverDownBinding, Keys.LControlKey);
+        PollScoreBoardBinding();
     }
 
     private void PollBinding(string id, string binding, Keys output)
@@ -472,6 +525,67 @@ internal sealed class HiddenKeybindsForm : Form
                 _status.Text = string.Format(System.Globalization.CultureInfo.CurrentCulture, T("Keybind.SendFailed"), FormatKeyboardCommand(output), error);
         }
         _wasPressed[id] = pressed;
+    }
+
+    private void PollHeldBinding(string id, string binding, Keys output)
+    {
+        bool pressed = HotasBindingDialog.IsBindingPressed(binding);
+        if (pressed == _heldOutputs.Contains(id)) return;
+        if (KeyboardTapSender.TrySetKeyState(output, pressed, _languageCode, out string? error))
+        {
+            if (pressed) _heldOutputs.Add(id);
+            else _heldOutputs.Remove(id);
+        }
+        else
+        {
+            _status.Text = string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                T("Keybind.SendFailed"), FormatKeyboardCommand(output), error);
+        }
+    }
+
+    private void PollScoreBoardBinding()
+    {
+        const string id = "scoreBoard";
+        bool pressed = HotasBindingDialog.IsBindingPressed(_settings.ScoreBoardMouseFixBinding);
+        bool wasPressed = _wasPressed.TryGetValue(id, out bool previous) && previous;
+        if (pressed && !wasPressed)
+        {
+            // Use the monitor currently containing the pointer, which is normally
+            // the monitor where War Thunder displays its scoreboard.
+            _scoreBoardTarget = Screen.FromPoint(Cursor.Position).Bounds.Location;
+            if (!SetCursorPos(_scoreBoardTarget.X, _scoreBoardTarget.Y))
+            {
+                int code = Marshal.GetLastWin32Error();
+                _status.Text = string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                    T("Keybind.SendFailed"), T("Keybind.ScoreBoardMouseFix"), new Win32Exception(code).Message);
+            }
+            else
+            {
+                // The game may center the cursor while opening the scoreboard.
+                // Correct it once more just after the game's own move.
+                _scoreBoardCorrection.Stop();
+                _scoreBoardCorrection.Start();
+            }
+        }
+        _wasPressed[id] = pressed;
+    }
+
+    private void ReleaseBinding(string id)
+    {
+        _wasPressed.Remove(id);
+        Keys? output = id switch { "hoverUp" => Keys.LShiftKey, "hoverDown" => Keys.LControlKey, _ => null };
+        if (output is Keys key && _heldOutputs.Contains(id))
+        {
+            if (KeyboardTapSender.TrySetKeyState(key, false, _languageCode, out _))
+                _heldOutputs.Remove(id);
+        }
+        if (id == "scoreBoard") _scoreBoardCorrection.Stop();
+    }
+
+    private void ReleaseHeldOutputs()
+    {
+        ReleaseBinding("hoverUp");
+        ReleaseBinding("hoverDown");
     }
 
     private bool SendKeyTap(int virtualKey, out string? error) =>
@@ -517,7 +631,11 @@ internal sealed class HiddenKeybindsForm : Form
     };
 
     private string FormatBinding(string binding) => string.IsNullOrWhiteSpace(binding) || binding == "Not assigned" ? AppText.T(_languageCode, "Assistant.BindInput") : HotasDirectInput.DisplayBinding(binding);
-    private static string FormatKeyboardCommand(Keys key) => key switch { Keys.PageUp => "PGUP", Keys.PageDown => "PGDN", _ => key.ToString().ToUpperInvariant() };
+    private static string FormatKeyboardCommand(Keys key) => key switch
+    {
+        Keys.PageUp => "PGUP", Keys.PageDown => "PGDN",
+        Keys.LShiftKey => "Left Shift", Keys.LControlKey => "Left Ctrl",
+        _ => key.ToString().ToUpperInvariant()
+    };
     private string T(string key) => AppText.T(_languageCode, key);
 }
-

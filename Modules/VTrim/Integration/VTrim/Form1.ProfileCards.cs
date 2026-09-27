@@ -73,7 +73,7 @@ public partial class Form1
             toolbar.Controls.AddRange(commands.ToArray());
             root.Controls.Add(toolbar);
         }
-        else root.Tag = toolbar; // Home places this filter in the main footer.
+        // The compact Home strip has no search or favorites controls in the footer.
         root.Controls.Add(viewport);
         foreach (var arrow in new[] { previous, next })
         {
@@ -107,26 +107,27 @@ public partial class Form1
                 for (int i = 0; i < commands.Count; i++)
                     commands[i].SetBounds(toolbar.Width - (commands.Count - i) * (buttonWidth + gap), S(stacked ? 48 : 4), buttonWidth, S(36));
                 int compactWidth = Math.Min(S(210), Math.Max(S(80), (int)(root.Height / .42f)));
-                // The Home strip should show three aircraft at normal desktop
-                // widths, including when Windows is scaled to 125% or 150%.
-                int compactMinimum = Math.Min(compactWidth, S(135));
-                int compactCapacity = Math.Min(3, Math.Max(1, (root.Width + gap) / (compactMinimum + gap)));
-                bool overflow = compact && cards.Count > compactCapacity;
+                // Reserve three slots and scale cards to the viewport at higher DPI.
+                bool overflow = compact && cards.Count > CompactAircraftStripLayout.Slots;
                 previous.Visible = next.Visible = overflow;
                 int arrowWidth = overflow ? Math.Max(S(24), Math.Min(S(48), root.Width / 25)) : 0;
                 previous.SetBounds(0, 0, arrowWidth, root.Height);
                 next.SetBounds(root.Width - arrowWidth, 0, arrowWidth, root.Height);
                 viewport.SetBounds(arrowWidth, header, root.Width - arrowWidth * 2, Math.Max(0, root.Height - header));
-                visibleCount = compact ? Math.Min(3, Math.Max(1, (viewport.Width + gap) / (compactMinimum + gap))) : Math.Max(1, viewport.Width / S(230));
-                int width = Math.Max(80, (viewport.ClientSize.Width - gap * (visibleCount - 1) - (compact ? 0 : SystemInformation.VerticalScrollBarWidth)) / visibleCount);
-                width = Math.Min(width, compact ? compactWidth : S(250));
+                visibleCount = compact ? CompactAircraftStripLayout.Slots : Math.Max(1, viewport.Width / S(230));
+                int width = compact
+                    ? CompactAircraftStripLayout.CardWidth(viewport.ClientSize.Width, gap, compactWidth)
+                    : Math.Max(80, (viewport.ClientSize.Width - gap * (visibleCount - 1) - SystemInformation.VerticalScrollBarWidth) / visibleCount);
+                if (!compact) width = Math.Min(width, S(250));
                 int height = compact ? Math.Max(40, Math.Min(viewport.Height, (int)(width * .43))) : (int)(width * .42);
                 first = Math.Clamp(first, 0, Math.Max(0, cards.Count - visibleCount));
+                int shownCount = compact ? Math.Min(visibleCount, cards.Count - first) : visibleCount;
+                int rowOffset = compact ? CompactAircraftStripLayout.LeftOffset(viewport.ClientSize.Width, gap, width, shownCount) : 0;
                 for (int i = 0; i < cards.Count; i++)
                 {
                     cards[i].Visible = !compact || (i >= first && i < first + visibleCount);
                     int index = compact ? i - first : i;
-                    cards[i].SetBounds((index % visibleCount) * (width + gap),
+                    cards[i].SetBounds(rowOffset + (index % visibleCount) * (width + gap),
                         compact ? (viewport.Height - height) / 2 : (index / visibleCount) * (height + gap) + viewport.AutoScrollPosition.Y, width, height);
                 }
                 previous.Enabled = first > 0; next.Enabled = first + visibleCount < cards.Count;

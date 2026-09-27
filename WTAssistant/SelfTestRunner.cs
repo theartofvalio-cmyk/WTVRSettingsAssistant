@@ -261,6 +261,20 @@ internal static class SelfTestRunner
             string baseDir = AppContext.BaseDirectory;
             Check("Published executable present", File.Exists(Path.Combine(baseDir, "WTVRSettingsAssistant.exe")) ||
                   string.Equals(Path.GetFileName(Environment.ProcessPath), "WTVRSettingsAssistant.exe", StringComparison.OrdinalIgnoreCase));
+            bool releaseOnlyNotes = true;
+            foreach (LanguageOption language in AppText.Languages)
+            {
+                string notes = AppText.T(language.Code, "Info.ChangesText");
+                releaseOnlyNotes &= notes.Contains("Hover UP", StringComparison.Ordinal) &&
+                    notes.Contains("RUNNING", StringComparison.Ordinal) &&
+                    !notes.Contains("v1.0", StringComparison.OrdinalIgnoreCase) &&
+                    !notes.Contains("v2.0.1", StringComparison.OrdinalIgnoreCase);
+            }
+            Check("Info shows only current release changes in every language", releaseOnlyNotes);
+            Check("Info release version matches executable",
+                string.Equals(ReleaseNotes.Version,
+                    System.Diagnostics.FileVersionInfo.GetVersionInfo(Environment.ProcessPath!).ProductVersion,
+                    StringComparison.Ordinal));
             Check("No unused WebView2 WPF wrapper", !File.Exists(Path.Combine(baseDir, "Microsoft.Web.WebView2.Wpf.dll")));
             Check("No WebView2 XML clutter", !Directory.EnumerateFiles(baseDir, "Microsoft.Web.WebView2*.xml", SearchOption.TopDirectoryOnly).Any());
 

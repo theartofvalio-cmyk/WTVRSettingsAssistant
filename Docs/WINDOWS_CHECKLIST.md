@@ -1,6 +1,6 @@
 # Windows validation checklist - WT Assistant v2.0.5
 
-1. Extract the complete archive, open `VR_Assistant_v2.0.5.sln`, select `Release | x86`, then Clean Solution and Rebuild Solution.
+1. Extract the complete archive, open `WTVRSettingsAssistant.sln`, select `Release | x86`, then Clean Solution and Rebuild Solution.
 2. Confirm there are zero compile errors and the executable/window icon uses the supplied WT VR Assistant artwork.
 3. Home at default size: confirm Live/Test at top; large Monitor/VR below; three assistants below them; large Launch Game below assistants; Discord/YouTube/Buy Me a Beer at bottom.
 4. Resize the main window from its minimum upward. Confirm the window remains 16:9 and logo/cards/icons/text/nav/footer grow and shrink together without overlaps or `...` text.

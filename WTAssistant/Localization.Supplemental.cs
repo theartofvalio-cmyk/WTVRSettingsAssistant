@@ -122,10 +122,8 @@ internal static partial class AppText
         text["Info.ChangesTitle"] = changesTitle.Replace("v1.0 → v{0}", "{0}");
         if (changesTitle.StartsWith("PATCH NOTES", StringComparison.Ordinal))
             text["Info.ChangesTitle"] = "Version {0} Patch Notes";
-        // Keep translated features, discard historical per-version headings.
-        text["Info.ChangesText"] = changesTitle.StartsWith("PATCH NOTES", StringComparison.Ordinal)
-            ? ReleaseNotes.Features
-            : string.Join("\n\n", changesText.Split('\n').Where(line => line.TrimStart().StartsWith("•", StringComparison.Ordinal)));
+        // The Info page receives only the changes in the current release.
+        text["Info.ChangesText"] = ReleaseNotes.Features;
         text["Info.OpenSource"] = legal;
         return text;
     }

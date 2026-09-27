@@ -21,7 +21,7 @@
     <Compile Include="LateralAssistController.cs" />
     <EmbeddedResource Include="Assets/**/*.png;Assets/Aircraft/aircraft-index.json" />
     <Compile Include="ScrollPagePanel.cs" />
-    <Compile Include="AircraftDatabase.cs;Form1.AircraftProfiles.cs;Form1.ProfileCards.cs;Form1.GlobalAxes.cs;Form1.AircraftControlEditor.cs" />
+    <Compile Include="AircraftDatabase.cs;CompactAircraftStripLayout.cs;Form1.AircraftProfiles.cs;Form1.ProfileCards.cs;Form1.GlobalAxes.cs;Form1.AircraftControlEditor.cs" />
     <Compile Include="Form1.cs;VTrimTranslations.cs;VTrimTranslations.Release21.cs;Form1.Curves.cs;Form1.Instructor.cs;Form1.VirtualOutput.cs;Form1.Embedded.cs;VirtualOutput.cs;AxisResponse.cs;InstructorController.cs;NativeVJoy.cs;VJoyNativeResolver.cs;AircraftIcons.cs;GameWindow.cs;VJoySetup.cs;StoreTrimController.cs;WarThunderTelemetry.cs;VTrimSelfTest.cs;XInputGamepad.cs" />
     <PackageReference Include="Vortice.DirectInput" Version="3.8.3" />
   </ItemGroup>

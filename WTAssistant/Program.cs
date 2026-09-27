@@ -164,7 +164,7 @@ public partial class MainForm : Form
     // Change these to true later if you want to re-enable F12 layout editing and external layout files.
     private static readonly bool LayoutEditorEnabled = false;
     private static readonly bool LoadExternalLayoutFiles = false;
-    private const string CurrentVersion = "2.0.5";
+    private const string CurrentVersion = ReleaseNotes.Version;
     private const string BuildChannelLabel = "";
     private const string GitHubLatestReleaseApi = "https://api.github.com/repos/theartofvalio-cmyk/WTVRSettingsAssistant/releases/latest";
     private const string GitHubReleasesApi = "https://api.github.com/repos/theartofvalio-cmyk/WTVRSettingsAssistant/releases?per_page=30";
@@ -5798,7 +5798,7 @@ render{
 
         _aboutCanvas.AddText(
             "PatchNotesTitle",
-            $"PATCH NOTES  ·  v1.0 → v{CurrentVersion}",
+            TF("Info.ChangesTitle", CurrentVersion),
             new Rectangle(40, 275, 1480, 55),
             32f,
             FontStyle.Bold,
@@ -5807,13 +5807,7 @@ render{
 
         _aboutCanvas.AddText(
             "PatchNotesText",
-            "• New KeyBind Assistant maps keyboard, mouse or HOTAS inputs to hidden War Thunder commands\n\n" +
-            "• VR head position Up/Down and Switch map to battlefield shortcuts\n\n" +
-            "• Persistent blue OFF / green ACTIVE icons for both assistants\n\n" +
-            "• Corrected game input injection and administrator-level error reporting\n\n" +
-            "• App options for beta updates, minimize to tray and start with Windows\n\n" +
-            "• Single-instance protection: reopening restores the existing window\n\n" +
-            "• Safer updates preserve settings, graphics profiles and control profiles",
+            T("Info.ChangesText"),
             new Rectangle(40, 340, 1480, 470),
             24f,
             FontStyle.Regular,
@@ -5858,7 +5852,7 @@ render{
                 ["AboutTitle"]=new(){X=40,Y=20,Width=1520,Height=60,FontSize=38},
                 ["AboutPurpose"]=new(){X=40,Y=100,Width=1510,Height=130,FontSize=25},
                 ["PatchNotesTitle"]=new(){X=55,Y=280,Width=1500,Height=50,FontSize=30},
-                ["PatchNotesText"]=new(){X=55,Y=345,Width=1500,Height=520,FontSize=24,Text="• KeyBind Assistant maps keyboard, mouse and HOTAS inputs to hidden game commands.\n\n• Physical ON/OFF switch support and persistent assistant states.\n\n• Embedded VTrim with aircraft profiles, physical-axis routing and response curves.\n\n• Automatic aircraft detection and per-aircraft Custom Profiles.\n\n• Full-page profile editing, copy/paste tools and custom curve points.\n\n• Improved launcher/update handling, localization, rendering and responsive layouts."},
+                ["PatchNotesText"]=new(){X=55,Y=345,Width=1500,Height=520,FontSize=24,Text=T("Info.ChangesText")},
                 ["OpenSourceText"]=new(){X=40,Y=913,Width=1510,Height=66,FontSize=22},
             });
             _aboutCanvas.Visible=false;

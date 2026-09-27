@@ -267,7 +267,7 @@ internal sealed class AviationHomePage : UserControl
         _launch.SetLabels(
             AppText.T(_languageCode, "Home.LaunchAction"),
             AppText.T(_languageCode, "Home.UpdateAction"),
-            AppText.T(_languageCode, "Home.RunningAction"));
+            "RUNNING");
         _monitor.Text = AppText.T(_languageCode, "Home.Monitor");
         _monitor.AccessibleName = _monitor.Text;
         _vr.Text = AppText.T(_languageCode, "Home.VR");
@@ -522,7 +522,7 @@ internal sealed class AviationHomePage : UserControl
                 off = AppText.T(_languageCode, "Common.Off"),
                 launch = AppText.T(_languageCode, "Home.LaunchAction"),
                 update = AppText.T(_languageCode, "Home.UpdateAction"),
-                running = AppText.T(_languageCode, "Home.RunningAction"),
+                running = "RUNNING",
                 discord = AppText.T(_languageCode, "Home.Discord"),
                 youtube = AppText.T(_languageCode, "Home.YouTube"),
                 support = AppText.T(_languageCode, "Home.Support")
@@ -638,6 +638,8 @@ body::before { content:""; position:fixed; inset:0; pointer-events:none; opacity
 #launch img { width:100%; height:auto; aspect-ratio:2070 / 432; object-fit:contain; display:block; image-rendering:auto; }
 #launch .launchText { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#efe2c4; text-shadow:0 2px 5px rgba(0,0,0,.85); font-weight:900; font-size:40px; line-height:1; letter-spacing:.8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 #launch.disabled { opacity:.54; cursor:default; }
+#launch.running { opacity:1; }
+#launch.running .launchText { color:#c8c3b8; }
 #launch.disabled:hover { box-shadow:none; }
 .link { min-width:0; border:1px solid var(--edge); border-radius:5px; background:var(--panel); color:var(--ink); display:flex; align-items:center; justify-content:center; gap:clamp(5px,.55vw,9px); font-size:clamp(14px,.92vw,18px); font-weight:750; cursor:pointer; transition:border-color .14s ease,background .14s ease; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; padding:0 clamp(6px,.65vw,10px); }
 .link img { width:clamp(16px,1.3vw,22px); height:clamp(16px,1.3vw,22px); object-fit:contain; flex:0 0 auto; image-rendering:auto; }
@@ -732,7 +734,7 @@ window.wtApplyState=s=>{
     el.classList.toggle('disabled',!enabled);
     el.tabIndex=profileState.visible&&enabled?0:-1;
   }
-  const launch=document.getElementById('launch'); launch.classList.toggle('disabled',s.running || !!s.busy || (!s.canLaunch && !s.update));
+  const launch=document.getElementById('launch'); launch.classList.toggle('disabled',s.running || !!s.busy || (!s.canLaunch && !s.update)); launch.classList.toggle('running',!!s.running);
   setImage('launchImage',s.running?launchImages.running:(s.update?launchImages.update:launchImages.normal));
   const launchLabel=s.running?s.labels.running:(s.update?s.labels.update:s.labels.launch); document.getElementById('launchText').textContent=launchLabel; launch.setAttribute('aria-label',launchLabel); requestAnimationFrame(fitLaunchText);
   for(const [id,label] of [['discord',s.labels.discord],['youtube',s.labels.youtube],['support',s.labels.support]]) { document.querySelector('#'+id+' span').textContent=label; document.getElementById(id).setAttribute('aria-label',label); }
@@ -880,11 +882,6 @@ window.wtApplyState=s=>{
             bool showHeroArea = scale >= 0.58f;
             _logo.Visible = !_webReady && showHeroArea;
             int profileStripHeight = Math.Max(64, S(68));
-            if (_aircraftProfiles is not null)
-            {
-                _aircraftProfiles.Visible = _showAircraftProfiles && showHeroArea;
-                _aircraftProfiles.SetBounds(canvasX + S(2), canvasY + canvasHeight - profileStripHeight, Math.Max(180, rightX - canvasX - S(16)), profileStripHeight);
-            }
             if (!_webReady && _logo.Visible)
             {
                 // Keep the hero centered in the real open area to the left of the
@@ -901,6 +898,29 @@ window.wtApplyState=s=>{
                 side = Math.Min(side, canvasHeight - profileStripHeight - S(20));
                 int logoY = canvasY + (canvasHeight - profileStripHeight - side) / 2;
                 _logo.SetBounds(logoX, logoY, side, side);
+            }
+            if (_aircraftProfiles is not null)
+            {
+                _aircraftProfiles.Visible = _showAircraftProfiles && showHeroArea;
+                int heroLeft = 0, heroRight = rightX - S(8);
+                int heroCenter = _logo.Left + _logo.Width / 2;
+                if (_webReady)
+                {
+                    // The enhanced Home hero is a CSS grid track, not the native
+                    // design-space logo cell. Match its actual 46% (42% on narrow
+                    // windows) track so the WinForms profile strip is centered
+                    // under the HTML logo at both window sizes.
+                    double padding = Math.Clamp(ClientSize.Width * .0085, 8, 16);
+                    double fraction = ClientSize.Width <= 1120 ? .42 : .46;
+                    double minimum = ClientSize.Width <= 1120 ? 320 : 380;
+                    double heroWidth = Math.Max(minimum, (ClientSize.Width - padding * 2) * fraction);
+                    heroLeft = (int)Math.Round(padding);
+                    heroRight = (int)Math.Round(padding + heroWidth);
+                    heroCenter = (heroLeft + heroRight) / 2;
+                }
+                int stripWidth = Math.Min(S(520), Math.Max(180, heroRight - heroLeft - S(16)));
+                int stripX = Math.Clamp(heroCenter - stripWidth / 2, heroLeft, Math.Max(heroLeft, heroRight - stripWidth));
+                _aircraftProfiles.SetBounds(stripX, canvasY + canvasHeight - profileStripHeight, stripWidth, profileStripHeight);
             }
 
             // Home composition follows the supplied reference: Live/Test at the top,
@@ -1402,7 +1422,8 @@ internal sealed class AviationLaunchButton : Control
         e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
         bool running = GameRunning;
         bool update = !running && UpdateAvailable;
-        Color color = CanLaunch || running || update ? Color.FromArgb(239, 226, 196) : IllustratedTheme.Muted;
+        Color color = running ? Color.FromArgb(200, 195, 184)
+            : CanLaunch || update ? Color.FromArgb(239, 226, 196) : IllustratedTheme.Muted;
         Rectangle launchBounds = new(2, 2, Width - 5, Height - 5);
         if (launchBounds.Width <= 0 || launchBounds.Height <= 0) return;
 

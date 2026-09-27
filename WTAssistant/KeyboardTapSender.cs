@@ -73,6 +73,33 @@ internal static class KeyboardTapSender
     private const uint XButton1 = 0x0001;
     private const uint XButton2 = 0x0002;
 
+    // Used by hover controls, which must stay down for as long as the assigned
+    // physical button is held rather than producing a short tap.
+    public static bool TrySetKeyState(Keys key, bool down, string languageCode, out string? error)
+    {
+        int virtualKey = (int)(key & Keys.KeyCode);
+        ushort scanCode = (ushort)MapVirtualKey((uint)virtualKey, 0);
+        if (virtualKey == 0 || scanCode == 0)
+        {
+            error = "No keyboard key is assigned.";
+            return false;
+        }
+
+        SyntheticKeyGuard.Suppress(virtualKey);
+        uint flags = KeyEventScanCode | (down ? 0u : KeyEventKeyUp);
+        if (IsExtended((Keys)virtualKey)) flags |= KeyEventExtendedKey;
+        Input input = new() { Type = InputKeyboard, Data = new InputUnion { Keyboard = new KeybdInput { ScanCode = scanCode, Flags = flags } } };
+        if (SendInput(1, [input], Marshal.SizeOf<Input>()) == 1)
+        {
+            error = null;
+            return true;
+        }
+
+        int code = Marshal.GetLastWin32Error();
+        error = code == 5 ? AppText.T(languageCode, "Keybind.InputBlocked") : new Win32Exception(code).Message;
+        return false;
+    }
+
     public static bool TryTap(Keys key, string languageCode, out string? error)
     {
         int virtualKey = (int)(key & Keys.KeyCode);

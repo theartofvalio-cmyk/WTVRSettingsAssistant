@@ -1,13 +1,13 @@
 # War Thunder VR Assistant
 
-Windows companion app for War Thunder pilots using VR, HOTAS, and rudder pedals. Version **2.0.5**.
+Windows companion app for War Thunder pilots using VR, HOTAS, and rudder pedals. Version **2.0.6**.
 
 **[Website and setup guide](https://wtvrassistant.com/)** · **[Download the latest Windows release](https://github.com/theartofvalio-cmyk/WTVRSettingsAssistant/releases/latest)**
 
 ## What it does
 
 - **Neck Assistant** adjusts VR head movement through OpenXR, VDXR, or SteamVR for more comfortable rearward viewing.
-- **KeyBind Assistant** maps keyboard, mouse, and HOTAS inputs, including physical two-position switches, to game button actions.
+- **KeyBind Assistant** maps keyboard, mouse, and HOTAS inputs, including physical two-position switches, Hover UP/Down controls, and a scoreboard cursor correction.
 - **VTrim Assistant** routes HOTAS axes through vJoy, provides virtual trim, and lets you edit pitch, roll, and yaw response curves.
 - **Aircraft profiles** are created as you fly using local War Thunder telemetry. The app switches to the detected aircraft's profile automatically. You can also add and customize profiles before flying them. A profile left on **Default** uses the Trim Dashboard and default axis settings; **Custom** stores aircraft-specific controls and curves.
 - **Monitor and VR profiles** let you manage separate graphics and control setups.
@@ -26,7 +26,7 @@ The app targets Windows x86 and uses the [vJoy driver](https://github.com/shaule
 
 ## Build from source
 
-Install the .NET 10 SDK on Windows, then run `Build.cmd` from this repository root. The publish output is written to `Builds/WTAssistant`. The source includes third-party license notices under `WTAssistant/ThirdParty`.
+Install the .NET 10 SDK on Windows, then run `Build.cmd` from this repository root, or open `WTVRSettingsAssistant.sln` in Visual Studio. The publish output is written to `Builds/WTAssistant`. The source includes third-party license notices under `WTAssistant/ThirdParty`.
 
 ## License and attribution
 

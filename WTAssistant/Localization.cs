@@ -12,6 +12,8 @@ internal static partial class AppText
         AddFlapsTranslations();
         AddRelease21Translations();
         AddRelease21LateTranslations();
+        AddHoverKeybindTranslations();
+        ApplyCurrentReleaseNotes();
     }
     private static readonly LanguageOption[] Options =
     {
@@ -1333,6 +1335,13 @@ internal static partial class AppText
         ["Keybind.HeadUp"] = "VR Head Position Up",
         ["Keybind.HeadDown"] = "VR Head Position Down",
         ["Keybind.Map"] = "Switch map to battlefield",
+        ["Keybind.HoverUp"] = "Hover UP",
+        ["Keybind.HoverDown"] = "Hover Down",
+        ["Keybind.ScoreBoardMouseFix"] = "Score Board Mouse Fix",
+        ["Keybind.LeftShift"] = "Left Shift",
+        ["Keybind.LeftCtrl"] = "Left Ctrl",
+        ["Keybind.MouseTopLeft"] = "Mouse to top-left",
+        ["Keybind.ScoreBoardHint"] = "Assign Score Board Mouse Fix to the same button you use for Scoreboard in War Thunder. Pressing it moves the cursor instantly to the top-left of that screen.",
         ["Keybind.AdvancedDescription"] = "Create custom switch positions and map each position to a keyboard key or mouse button.",
         ["Keybind.ManageSwitches"] = "MANAGE CUSTOM SWITCHES",
         ["Keybind.Notice"] = "Important: keep War Thunder VR Assistant running while using these bindings. If War Thunder runs as administrator, run this app as administrator too so the keyboard commands can reach the game.",
@@ -1486,7 +1495,4 @@ internal static partial class AppText
         ["Switch.Type.Custom"] = "Custom / Multi-State",
     };
 }
-
-
-
 
