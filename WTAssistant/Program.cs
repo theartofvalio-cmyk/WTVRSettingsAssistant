@@ -39,16 +39,18 @@ internal static class Program
             return;
         }
 
+        bool windowsStartup = args.Contains("--startup", StringComparer.OrdinalIgnoreCase);
         using Mutex instanceMutex = new(initiallyOwned: true, InstanceMutexName, out bool isFirstInstance);
         using EventWaitHandle activateEvent = new(false, EventResetMode.AutoReset, ActivateEventName);
         if (!isFirstInstance)
         {
-            try { activateEvent.Set(); } catch { }
+            if (!windowsStartup)
+                try { activateEvent.Set(); } catch { }
             return;
         }
 
         ApplicationConfiguration.Initialize();
-        MainForm mainForm = new();
+        MainForm mainForm = new(windowsStartup);
         RegisteredWaitHandle activationRegistration = ThreadPool.RegisterWaitForSingleObject(
             activateEvent,
             (_, _) =>
@@ -3050,6 +3052,7 @@ render{
     private string _languageCode = "en";
     private string _uiTheme = AppThemeAssets.DefaultTheme;
     private bool _allowExit;
+    private readonly bool _launchToTray;
     private NotifyIcon? _trayIcon;
     private AviationHomePage? _aviationHome;
 
@@ -3177,8 +3180,9 @@ render{
         e.Graphics.FillRectangle(background, ClientRectangle);
     }
 
-    public MainForm()
+    public MainForm(bool launchToTray = false)
     {
+        _launchToTray = launchToTray;
         AutoScaleMode = AutoScaleMode.None;
 
         Text = "War Thunder VR Assistant";
@@ -3236,6 +3240,13 @@ render{
 
         AppUpgradeMigration.Run(SettingsFolder);
         LoadState();
+        if (_launchToTray)
+        {
+            // Apply the startup state before the first Show so the dashboard is
+            // never painted as a normal window during Windows sign-in.
+            ShowInTaskbar = false;
+            WindowState = FormWindowState.Minimized;
+        }
         AppThemeAssets.SetActiveTheme(_uiTheme);
         LoadAssets();
         LoadGameInstallations();
@@ -3255,7 +3266,7 @@ render{
                 _neckAssistForm?.Hide();
                 ShowScreen(_mainPanel);
             }
-            if (_startMinimizedToTray && Environment.GetCommandLineArgs().Contains("--startup", StringComparer.OrdinalIgnoreCase)) HideToTray();
+            if (_launchToTray) HideToTray(showNotification: false);
             await CheckForUpdatesAsync(false);
         };
 
@@ -4876,13 +4887,13 @@ render{
         _trayIcon.DoubleClick += (_, _) => RestoreFromTray();
     }
 
-    private void HideToTray()
+    private void HideToTray(bool showNotification = true)
     {
         _neckAssistForm?.Hide();
-        ShowInTaskbar = false;
         WindowState = FormWindowState.Minimized;
         Hide();
-        _trayIcon?.ShowBalloonTip(1500, T("Tray.AppName"), T("Tray.Balloon"), ToolTipIcon.Info);
+        if (showNotification)
+            _trayIcon?.ShowBalloonTip(1500, T("Tray.AppName"), T("Tray.Balloon"), ToolTipIcon.Info);
     }
 
     private void RestoreFromTray()
@@ -4890,6 +4901,9 @@ render{
         ShowInTaskbar = true;
         Show();
         WindowState = FormWindowState.Normal;
+        LayoutThemePages();
+        _aviationHome?.RefreshLayoutAfterRestore();
+        Invalidate(true);
         Activate();
         BringToFront();
     }
@@ -9979,6 +9993,8 @@ catch {
         try
         {
             Directory.CreateDirectory(SettingsFolder);
+            Size windowSize = WindowState == FormWindowState.Normal || _lastNormalClientSize.IsEmpty
+                ? ClientSize : _lastNormalClientSize;
 
             SavedState state = new SavedState
             {
@@ -10009,8 +10025,8 @@ catch {
                 UseTestServer = _useTestServer,
                 LanguageCode = _languageCode,
                 UiTheme = _uiTheme,
-                WindowWidth = ClientSize.Width,
-                WindowHeight = ClientSize.Height,
+                WindowWidth = windowSize.Width,
+                WindowHeight = windowSize.Height,
                 WindowLayoutRevision = 205
             };
 

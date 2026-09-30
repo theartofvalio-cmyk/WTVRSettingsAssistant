@@ -180,4 +180,4 @@ for design_h, min_scale in [(1080, .74), (980, .74), (900, .74), (720, .74)]:
             need(surface_h >= viewport_h, f"VTrim surface shorter than viewport: {design_h}/{viewport_h}/{scale}")
             need(surface_h >= round(design_h * scale), f"VTrim scaled design clipped: {design_h}/{viewport_h}/{scale}")
 
-print(f"WT Assistant v2.0.6 layout geometry audit: PASS ({checks} checks)")
+print(f"WT Assistant v2.0.8 layout geometry audit: PASS ({checks} checks)")

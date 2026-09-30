@@ -14,7 +14,58 @@ internal static class Preview
         string output = Path.GetFullPath(args.FirstOrDefault(a => a != "classic" && !a.StartsWith("--")) ?? "artifacts/theme-preview");
         Directory.CreateDirectory(output);
         ApplicationConfiguration.Initialize();
-        using MainForm main = new();
+        using MainForm main = new(args.Contains("--startup-smoke"));
+        if (args.Contains("--startup-smoke"))
+        {
+            const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Instance;
+            main.Show();
+            Application.DoEvents();
+            if (main.Visible || main.ShowInTaskbar || main.WindowState != FormWindowState.Minimized)
+                throw new Exception("Windows startup displayed the main window instead of staying in the tray.");
+
+            var home = (Control)typeof(MainForm).GetField("_aviationHome", flags)!.GetValue(main)!;
+            var webViewField = home.GetType().GetField("_webView", flags)!;
+            if (webViewField.GetValue(home) is not null)
+                throw new Exception("WebView2 initialized while Windows startup was hidden.");
+
+            typeof(MainForm).GetMethod("RestoreFromExternalLaunch", flags)!.Invoke(main, null);
+            Application.DoEvents();
+            if (!main.Visible || !main.ShowInTaskbar || main.WindowState != FormWindowState.Normal)
+                throw new Exception("Restoring the startup instance did not show a normal window.");
+            if (webViewField.GetValue(home) is null)
+                throw new Exception("WebView2 was not started after restoring the Home page.");
+            var homePanel = (Panel)typeof(MainForm).GetField("_mainPanel", flags)!.GetValue(main)!;
+            Rectangle expected = new(main.Padding.Left, main.Padding.Top,
+                main.ClientSize.Width - main.Padding.Horizontal,
+                main.ClientSize.Height - main.Padding.Vertical);
+            if (homePanel.Bounds != expected)
+                throw new Exception($"Restored Home layout is clipped: actual={homePanel.Bounds}, expected={expected}.");
+
+            Size restoredSize = main.ClientSize;
+            typeof(MainForm).GetMethod("HideToTray", flags)!.Invoke(main, [false]);
+            Application.DoEvents();
+            if (main.Visible) throw new Exception("Hiding to the tray left the window visible.");
+            typeof(MainForm).GetMethod("RestoreFromExternalLaunch", flags)!.Invoke(main, null);
+            Application.DoEvents();
+            if (!main.Visible || main.WindowState != FormWindowState.Normal || homePanel.Bounds != expected)
+                throw new Exception($"The Home page did not recover after a tray hide and restore: visible={main.Visible}, state={main.WindowState}, home={homePanel.Bounds}, expected={expected}.");
+            typeof(MainForm).GetMethod("HideToTray", flags)!.Invoke(main, [false]);
+            typeof(MainForm).GetField("_allowExit", flags)!.SetValue(main, true);
+            main.Close();
+            string savedState = File.ReadAllText(Path.Combine(settings, "settings.json"));
+            using var state = System.Text.Json.JsonDocument.Parse(savedState);
+            if (state.RootElement.GetProperty("WindowWidth").GetInt32() != restoredSize.Width ||
+                state.RootElement.GetProperty("WindowHeight").GetInt32() != restoredSize.Height)
+                throw new Exception("Exiting from the tray overwrote the restored window size.");
+            DateTime deadline = DateTime.UtcNow.AddSeconds(2);
+            while (DateTime.UtcNow < deadline)
+            {
+                Application.DoEvents();
+                Thread.Sleep(20);
+            }
+            Console.WriteLine("PASS: Windows startup stays hidden, defers WebView2, restores Home, and preserves window size on tray exit.");
+            return;
+        }
         Prepare(main);
         if (args.Contains("--footer-only"))
         {

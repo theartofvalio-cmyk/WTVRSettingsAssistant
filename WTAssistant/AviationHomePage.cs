@@ -201,15 +201,27 @@ internal sealed class AviationHomePage : UserControl
             _webLoadingCover.BringToFront();
         }
 
-        Resize += (_, _) => { Arrange(); Invalidate(); };
-        HandleCreated += async (_, _) =>
+        void StartWebSurfaceWhenVisible()
         {
-            BeginInvoke((Action)Arrange);
-            if (!ShouldUseEnhancedWebUi()) return;
-            await InitializeWebSurfaceAsync(
+            if (IsDisposed || Disposing || !IsHandleCreated || !Visible ||
+                FindForm()?.WindowState == FormWindowState.Minimized ||
+                !ShouldUseEnhancedWebUi()) return;
+            _ = InitializeWebSurfaceAsync(
                 monitor, vr, openNeck, toggleNeck, openKeys, toggleKeys,
                 serverChanged, refreshServers, launch, logoClick, discord, youtube, support,
                 openTrim ?? (() => { }), toggleTrim ?? (() => { }));
+        }
+
+        Resize += (_, _) => { Arrange(); Invalidate(); };
+        HandleCreated += (_, _) =>
+        {
+            BeginInvoke((Action)Arrange);
+            BeginInvoke((Action)StartWebSurfaceWhenVisible);
+        };
+        VisibleChanged += (_, _) =>
+        {
+            if (Visible && IsHandleCreated)
+                BeginInvoke((Action)StartWebSurfaceWhenVisible);
         };
     }
 
@@ -257,6 +269,12 @@ internal sealed class AviationHomePage : UserControl
         PushWebState();
     }
     public void SetServerStatuses(ServerSignal live, ServerSignal test) { /* Server availability indicators intentionally removed in v2.0. */ }
+
+    public void RefreshLayoutAfterRestore()
+    {
+        Arrange();
+        Invalidate(true);
+    }
 
     public void SetLanguage(string languageCode)
     {
@@ -321,7 +339,7 @@ internal sealed class AviationHomePage : UserControl
         Action openTrim,
         Action toggleTrim)
     {
-        if (_webView is not null || IsDisposed) return;
+        if (_webView is not null || IsDisposed || Disposing || _webFallbackLocked) return;
         _webFallbackLocked = false;
 
         WebView2 view = new()
@@ -345,7 +363,7 @@ internal sealed class AviationHomePage : UserControl
             _webInitWatchdog.Tick += (_, _) =>
             {
                 _webInitWatchdog?.Stop();
-                if (!_webReady && !IsDisposed) SwitchToNativeFallback();
+                if (!_webReady && CanUseWebView(view)) SwitchToNativeFallback();
             };
             _webInitWatchdog.Start();
 
@@ -355,7 +373,9 @@ internal sealed class AviationHomePage : UserControl
                 "WebView2");
             Directory.CreateDirectory(userData);
             CoreWebView2Environment environment = await CoreWebView2Environment.CreateAsync(null, userData);
+            if (!CanUseWebView(view)) { DiscardWebView(view); return; }
             await view.EnsureCoreWebView2Async(environment);
+            if (!CanUseWebView(view)) { DiscardWebView(view); return; }
             string webAssetFolder = PrepareWebAssetFolder();
             view.CoreWebView2.SetVirtualHostNameToFolderMapping(
                 "wtassets.local",
@@ -373,12 +393,13 @@ internal sealed class AviationHomePage : UserControl
 
             view.CoreWebView2.ProcessFailed += (_, _) =>
             {
-                if (IsDisposed) return;
-                try { BeginInvoke((Action)SwitchToNativeFallback); } catch { }
+                if (!CanUseWebView(view)) return;
+                try { BeginInvoke((Action)(() => { if (CanUseWebView(view)) SwitchToNativeFallback(); })); } catch { }
             };
 
             view.CoreWebView2.WebMessageReceived += (_, e) =>
             {
+                if (!CanUseWebView(view)) return;
                 string message;
                 try { message = e.TryGetWebMessageAsString(); }
                 catch { return; }
@@ -433,7 +454,7 @@ internal sealed class AviationHomePage : UserControl
 
             view.NavigationCompleted += (_, e) =>
             {
-                if (IsDisposed || _webFallbackLocked) return;
+                if (!CanUseWebView(view)) return;
                 if (!e.IsSuccess)
                 {
                     SwitchToNativeFallback();
@@ -457,19 +478,31 @@ internal sealed class AviationHomePage : UserControl
         catch
         {
             _webInitWatchdog?.Stop();
-            try { view.Dispose(); } catch { }
-            _webView = null;
-            SwitchToNativeFallback();
+            DiscardWebView(view);
+            if (!IsDisposed && !Disposing) SwitchToNativeFallback();
         }
+    }
+
+    private bool CanUseWebView(WebView2 view) =>
+        !IsDisposed && !Disposing && !_webFallbackLocked &&
+        ReferenceEquals(_webView, view) && !view.IsDisposed && !view.Disposing;
+
+    private void DiscardWebView(WebView2 view)
+    {
+        if (ReferenceEquals(_webView, view)) _webView = null;
+        try { Controls.Remove(view); } catch { }
+        try { view.Dispose(); } catch { }
     }
 
     private void SwitchToNativeFallback()
     {
+        if (IsDisposed || Disposing) return;
         _webInitWatchdog?.Stop();
         _webFallbackLocked = true;
         _webReady = false;
         _webLoadingCover.Visible = false;
-        if (_webView is not null) _webView.Visible = false;
+        if (_webView is { IsDisposed: false } view)
+            try { view.Visible = false; } catch (ObjectDisposedException) { }
         SetNativeSurfaceVisible(true);
         AttachProfileSelectorsToSurface();
         Arrange();
@@ -491,13 +524,13 @@ internal sealed class AviationHomePage : UserControl
 
     private void ReloadWebUi()
     {
-        if (_webView?.CoreWebView2 is null) return;
-        try { _webView.NavigateToString(BuildWebHtml()); } catch { }
+        if (_webView is not { } view || !CanUseWebView(view)) return;
+        try { if (view.CoreWebView2 is not null) view.NavigateToString(BuildWebHtml()); } catch { }
     }
 
     private void PushWebState()
     {
-        if (!_webReady || _webView?.CoreWebView2 is null) return;
+        if (!_webReady || _webView is not { } view || !CanUseWebView(view)) return;
         string liveVersion = _liveVersion is null
             ? AppText.T(_languageCode, "Home.Version").Replace("{0}", "...")
             : string.Format(AppText.T(_languageCode, "Home.Version"), _liveVersion);
@@ -552,10 +585,15 @@ internal sealed class AviationHomePage : UserControl
 
     private async void SendWebStateAsync(string payload)
     {
-        if (_webView?.CoreWebView2 is null) return;
-        _lastWebState = payload;
-        try { await _webView.CoreWebView2.ExecuteScriptAsync("window.wtApplyState(" + payload + ");"); }
-        catch { _lastWebState = null; }
+        if (!_webReady || _webView is not { } view || !CanUseWebView(view)) return;
+        try
+        {
+            CoreWebView2? core = view.CoreWebView2;
+            if (core is null) return;
+            _lastWebState = payload;
+            await core.ExecuteScriptAsync("window.wtApplyState(" + payload + ");");
+        }
+        catch { if (ReferenceEquals(_webView, view)) _lastWebState = null; }
     }
 
     private string BuildWebHtml()
@@ -1036,6 +1074,20 @@ window.wtApplyState=s=>{
         TextAlign = alignment,
         AutoSize = false
     };
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _webFallbackLocked = true;
+            _webReady = false;
+            _webInitWatchdog?.Stop();
+            _webInitWatchdog?.Dispose();
+            _webInitWatchdog = null;
+            _webView = null;
+        }
+        base.Dispose(disposing);
+    }
 }
 
 internal sealed class AlphaPictureBox : PictureBox

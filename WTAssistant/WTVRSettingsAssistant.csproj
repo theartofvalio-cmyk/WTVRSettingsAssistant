@@ -13,11 +13,11 @@
     <AssemblyName>WTVRSettingsAssistant</AssemblyName>
     <RootNamespace>WTVRSettingsAssistant</RootNamespace>
     <ApplicationIcon>Icon.ico</ApplicationIcon>
-    <Version>2.0.7</Version>
-    <InformationalVersion>2.0.7</InformationalVersion>
+    <Version>2.0.8</Version>
+    <InformationalVersion>2.0.8</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
-    <AssemblyVersion>2.0.7.0</AssemblyVersion>
-    <FileVersion>2.0.7.0</FileVersion>
+    <AssemblyVersion>2.0.8.0</AssemblyVersion>
+    <FileVersion>2.0.8.0</FileVersion>
     <!-- Keep Visual Studio / dotnet build output small. The release publish script
          supplies win-x86 + self-contained explicitly and creates a single-file app. -->
     <SelfContained>false</SelfContained>
@@ -85,5 +85,12 @@
     <ItemGroup>
       <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
     </ItemGroup>
+  </Target>
+
+  <Target Name="RemoveWebView2DocumentationFromPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <WebView2Documentation Include="$(PublishDir)Microsoft.Web.WebView2*.xml" />
+    </ItemGroup>
+    <Delete Files="@(WebView2Documentation)" />
   </Target>
 </Project>
