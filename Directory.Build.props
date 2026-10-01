@@ -15,5 +15,7 @@
 
     <BaseIntermediateOutputPath>$(WtaBuildRoot)\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
     <BaseOutputPath>$(WtaBuildRoot)\bin\$(MSBuildProjectName)\</BaseOutputPath>
+    <!-- Older builds may have left obj/bin under a project. Never compile those generated sources. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);**/obj/**;**/bin/**</DefaultItemExcludes>
   </PropertyGroup>
 </Project>

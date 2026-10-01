@@ -220,12 +220,9 @@ public partial class Form1
                     if (category is not null && (aircraft?.FlightCategory ?? profile.AircraftType) != category) continue;
                     if (!AircraftSearchService.Normalize(name + " " + aircraft?.DisplayName).Contains(AircraftSearchService.Normalize(filter.Text))) continue;
                     var card = new AircraftCard { Tag = name, Text = AircraftSearchService.CleanName(aircraft?.DisplayName ?? name), Premium = aircraft?.IsPremium == true,
-                        CompactLayout = compact,
                         Active = string.Equals(name, _activeProfileName, StringComparison.OrdinalIgnoreCase),
                         Favorite = !compact && _favoriteAircraft.Contains(profile.AircraftId ?? profile.Id),
-                        // Mode badges belong to the full Profiles page only. The Home
-                        // strip should show aircraft names/artwork without DEFAULT/CUSTOM labels.
-                        ModeBadge = compact ? string.Empty : VT(profile.UseCustomControls ? "Profiles.CustomMode" : "Profiles.DefaultMode"),
+                        ModeBadge = VT(profile.UseCustomControls ? "Profiles.CustomMode" : "Profiles.DefaultMode"),
                         CustomMode = profile.UseCustomControls,
                         AccessibleName = VF("Profiles.CardAccessible", AircraftSearchService.CleanName(aircraft?.DisplayName ?? name), profile.UseCustomControls ? VT("Profiles.CustomControlsLabel") : VT("Profiles.DefaultControlsLabel")) };
                     card.Click += (_, _) =>
@@ -402,8 +399,6 @@ internal sealed class AircraftCard : Button
     public string ModeBadge { get; set; } = string.Empty;
     [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     public bool CustomMode { get; set; }
-    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
-    public bool CompactLayout { get; set; }
     public AircraftCard()
     {
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint |
@@ -435,7 +430,7 @@ internal sealed class AircraftCard : Button
         graphics.DrawRectangle(border, bounds.X + 1, bounds.Y + 1, bounds.Width - 3, bounds.Height - 3);
         int padding = Math.Max(6, (int)Math.Round(graphics.DpiX / 96f * 6));
         var pictureBounds = new RectangleF(bounds.X + padding, bounds.Y + padding,
-            Math.Max(1, bounds.Width * .60f - padding * 2), Math.Max(1, bounds.Height - padding * 2));
+            Math.Max(1, bounds.Width * .50f - padding * 2), Math.Max(1, bounds.Height - padding * 2));
         if (artwork is not null)
         {
             float scale = Math.Min(pictureBounds.Width / artwork.Width, pictureBounds.Height / artwork.Height);
@@ -444,33 +439,21 @@ internal sealed class AircraftCard : Button
             graphics.DrawImage(artwork, pictureBounds.X,
                 pictureBounds.Y + (pictureBounds.Height - height) / 2, width, height);
         }
-        TextRenderer.DrawText(graphics, AircraftSearchService.CleanName(name), font,
-            new Rectangle(bounds.X + 8, bounds.Y + 6, bounds.Width - 16, Math.Min(bounds.Height - 12, font.Height + 6)), Color.WhiteSmoke,
-            TextFormatFlags.Right | TextFormatFlags.Top | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
-    }
-    internal static void PaintCompactAircraft(Graphics graphics, Rectangle bounds, string name, Image? artwork, bool premium, bool selected, Font font)
-    {
-        using var background = new SolidBrush(premium ? Color.FromArgb(73, 63, 31) : Color.FromArgb(43, 63, 73));
-        graphics.FillRectangle(background, bounds);
-        using var border = new Pen(selected ? Color.WhiteSmoke : premium ? Color.FromArgb(145, 119, 43) : Color.FromArgb(66, 87, 98), selected ? 2 : 1);
-        graphics.DrawRectangle(border, bounds.X + 1, bounds.Y + 1, bounds.Width - 3, bounds.Height - 3);
-
-        int padding = Math.Max(4, (int)Math.Round(graphics.DpiX / 96f * 4));
-        int titleHeight = Math.Min(bounds.Height / 2, Math.Max(font.Height + 3, 19));
-        var titleBounds = new Rectangle(bounds.X + padding, bounds.Y + 2,
-            Math.Max(1, bounds.Width - padding * 2), titleHeight);
-        TextRenderer.DrawText(graphics, AircraftSearchService.CleanName(name), font, titleBounds, Color.WhiteSmoke,
-            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine |
-            TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
-
-        if (artwork is null) return;
-        var pictureBounds = new RectangleF(bounds.X + padding, titleBounds.Bottom + 2,
-            Math.Max(1, bounds.Width - padding * 2), Math.Max(1, bounds.Bottom - titleBounds.Bottom - padding - 2));
-        float scale = Math.Min(pictureBounds.Width / artwork.Width, pictureBounds.Height / artwork.Height);
-        float width = artwork.Width * scale, height = artwork.Height * scale;
-        graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-        graphics.DrawImage(artwork, pictureBounds.X + (pictureBounds.Width - width) / 2,
-            pictureBounds.Y + (pictureBounds.Height - height) / 2, width, height);
+        string title = AircraftSearchService.CleanName(name);
+        int titleX = bounds.X + (int)Math.Ceiling(bounds.Width * .50f);
+        int titleWidth = Math.Max(1, bounds.Right - padding - titleX);
+        float titleSize = font.Size;
+        while (titleSize > 11f)
+        {
+            using var candidate = new Font(font.FontFamily, titleSize, font.Style, GraphicsUnit.Pixel);
+            if (TextRenderer.MeasureText(graphics, title, candidate, Size.Empty,
+                    TextFormatFlags.SingleLine | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix).Width <= titleWidth) break;
+            titleSize -= 1f;
+        }
+        using var titleFont = new Font(font.FontFamily, titleSize, font.Style, GraphicsUnit.Pixel);
+        TextRenderer.DrawText(graphics, title, titleFont,
+            new Rectangle(titleX, bounds.Y + 6, titleWidth, Math.Min(bounds.Height - 12, titleFont.Height + 6)), Color.WhiteSmoke,
+            TextFormatFlags.Right | TextFormatFlags.Top | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding);
     }
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -478,9 +461,8 @@ internal sealed class AircraftCard : Button
         using var font = new Font("Segoe UI", Text == "+" ? Math.Min(32, Height * .4f) : Math.Clamp(Height * .21f, 11, 24), FontStyle.Regular, GraphicsUnit.Pixel);
         if (Text != "+")
         {
-            if (CompactLayout) PaintCompactAircraft(e.Graphics, ClientRectangle, Text, _artwork, Premium, Active, font);
-            else PaintAircraft(e.Graphics, ClientRectangle, Text, _artwork, Premium, Active, font);
-            // Profile mode belongs at the lower-right of full Profiles cards.
+            PaintAircraft(e.Graphics, ClientRectangle, Text, _artwork, Premium, Active, font);
+            // Profile mode belongs at the lower-right of each aircraft card.
             // If the aircraft is a favorite, the star owns the far-right slot and
             // the DEFAULT/CUSTOM badge sits immediately to its left.
             float favoriteRadius = Favorite ? Math.Clamp(Height * .13f, 8, 18) : 0f;

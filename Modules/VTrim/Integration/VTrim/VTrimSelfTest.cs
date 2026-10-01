@@ -33,15 +33,18 @@ public static class VTrimSelfTest
                 using (var graphics = System.Drawing.Graphics.FromImage(card))
                 using (var font = new System.Drawing.Font("Segoe UI", 16, System.Drawing.FontStyle.Regular,
                     System.Drawing.GraphicsUnit.Pixel))
-                    AircraftCard.PaintCompactAircraft(graphics, new System.Drawing.Rectangle(0, 0, width, 76),
+                    AircraftCard.PaintAircraft(graphics, new System.Drawing.Rectangle(0, 0, width, 76),
                         "MiG-29 Sniper", artwork, false, false, font);
                 var redPixels = Enumerable.Range(0, card.Height)
                     .SelectMany(y => Enumerable.Range(0, card.Width)
                         .Where(x => { var pixel = card.GetPixel(x, y); return pixel.R > 180 && pixel.G < 80 && pixel.B < 80; })
                         .Select(x => new System.Drawing.Point(x, y))).ToArray();
-                Check(redPixels.Length > 0 && redPixels.Min(point => point.Y) >= 24 &&
-                    Math.Abs((redPixels.Min(point => point.X) + redPixels.Max(point => point.X)) / 2.0 - (width - 1) / 2.0) <= 1,
-                    $"Compact Home artwork stays centered below its title at {width}px");
+                Check(redPixels.Length > 0 && redPixels.Min(point => point.X) <= 8 &&
+                    redPixels.Max(point => point.X) < width * .65,
+                    $"Home artwork stays on the left at {width}px");
+                Check(Enumerable.Range(0, 28).Any(y => Enumerable.Range(width * 2 / 3, width - width * 2 / 3)
+                    .Any(x => { var pixel = card.GetPixel(x, y); return pixel.R > 220 && pixel.G > 220 && pixel.B > 220; })),
+                    $"Home aircraft name stays at the upper right at {width}px");
             }
 
             foreach (string language in new[] { "en", "bg", "es", "de", "fr", "pt", "pl", "ru", "uk", "tr", "el", "ro", "he", "zh-Hans" })

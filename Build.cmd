@@ -26,20 +26,20 @@ if exist "%~dp0WTAssistant\obj" rmdir /s /q "%~dp0WTAssistant\obj"
 if exist "%~dp0Modules\VTrim\Integration\VTrim\bin" rmdir /s /q "%~dp0Modules\VTrim\Integration\VTrim\bin"
 if exist "%~dp0Modules\VTrim\Integration\VTrim\obj" rmdir /s /q "%~dp0Modules\VTrim\Integration\VTrim\obj"
 
-echo Restoring WT Assistant v2.0.8...
+echo Restoring WT Assistant v2.0.9...
 dotnet restore ".\WTAssistant\WTVRSettingsAssistant.csproj" -p:Configuration=Release -p:Platform=x86 -r win-x86
 if errorlevel 1 (
  echo.
- echo WT Assistant v2.0.8 restore failed.
+ echo WT Assistant v2.0.9 restore failed.
  if not defined WTA_CI pause
  exit /b 1
 )
 
-echo Building WT Assistant v2.0.8 clean portable app...
+echo Building WT Assistant v2.0.9 clean portable app...
 dotnet publish ".\WTAssistant\WTVRSettingsAssistant.csproj" -c Release -p:Platform=x86 -r win-x86 --self-contained true --no-restore -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:SatelliteResourceLanguages=en -p:DebugType=None -p:DebugSymbols=false -o "%OUT%"
 if errorlevel 1 (
  echo.
- echo WT Assistant v2.0.8 publish failed.
+ echo WT Assistant v2.0.9 publish failed.
  if not defined WTA_CI pause
  exit /b 1
 )
@@ -96,7 +96,7 @@ if exist "%~dp0Modules\VTrim\Integration\VTrim\obj" rmdir /s /q "%~dp0Modules\VT
 if exist "%WTA_BUILD_TEMP%" rmdir /s /q "%WTA_BUILD_TEMP%"
 
 echo.
-echo WT Assistant v2.0.8 completed.
+echo WT Assistant v2.0.9 completed.
 echo CLEAN APP FOLDER:
 echo   %OUT%
 echo.

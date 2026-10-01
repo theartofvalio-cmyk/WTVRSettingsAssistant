@@ -5,7 +5,7 @@ using HOTASTrimUtility;
 internal static class Program
 {
     [STAThread]
-    static void Main()
+    static void Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
         string output = Path.GetFullPath("artifacts/profile-cards-preview");
@@ -62,7 +62,7 @@ internal static class Program
             if (compact)
             {
                 var arrows = browser.Controls.OfType<Button>().Where(b => b.GetType().Name == "AircraftNavigationButton").ToArray();
-                if (width == 1600 && arrows.Any(b => b.Visible)) throw new Exception("Arrows must disappear when all aircraft fit");
+                if (width == 1600 && !arrows.All(b => b.Visible)) throw new Exception("Arrows must remain available when more than three aircraft exist");
                 if (width == 700)
                 {
                     if (!arrows.All(b => b.Visible) || arrows[0].Enabled || !arrows[1].Enabled) throw new Exception("Initial arrow availability incorrect");
@@ -75,19 +75,16 @@ internal static class Program
                     arrows[1].PerformClick();
                     if (!arrows[0].Enabled) throw new Exception("Next page should enable previous");
                 }
-                var toolbar = (Control)browser.Tag!;
-                var search = toolbar.Controls.OfType<TextBox>().Single();
-                var favorites = toolbar.Controls.OfType<Button>().Single(b => b.GetType().Name == "AircraftFavoriteButton");
                 bool HasAddTile() => browser.Controls.Cast<Control>().SelectMany(c => c.Controls.Cast<Control>()).Any(c => c.Text == "+");
-                search.Text = "no-matching-aircraft";
-                if (HasAddTile()) throw new Exception("Empty Home search must never offer profile creation");
-                favorites.PerformClick();
-                if (HasAddTile()) throw new Exception("Empty Home favorites search must never offer profile creation");
-                search.Clear();
-                if (HasAddTile()) throw new Exception("Empty Home favorites must never offer profile creation");
+                if (HasAddTile()) throw new Exception("Home must never offer profile creation");
             }
             else if (!browser.Controls.Cast<Control>().SelectMany(c => c.Controls.Cast<Control>()).Any(c => c.Text == "+"))
                 throw new Exception("Profiles section must retain profile creation");
+        }
+        if (args.Contains("--render-only"))
+        {
+            Console.WriteLine("Rendered profile cards and compact Home strip.");
+            return;
         }
         using var timer = new System.Windows.Forms.Timer { Interval = 150 };
         Exception? failure = null;
