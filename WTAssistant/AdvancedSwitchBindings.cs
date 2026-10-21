@@ -26,6 +26,7 @@ internal sealed class SwitchDefinition
     public string Name { get; set; } = "New Switch";
     public bool Enabled { get; set; } = true;
     public int DeviceId { get; set; }
+    public Guid DeviceGuid { get; set; }
     public string DeviceName { get; set; } = "Controller";
     public string SwitchType { get; set; } = "2-State";
     public bool ReversePositions { get; set; }
@@ -43,6 +44,7 @@ internal sealed class SwitchDefinition
 internal sealed class SwitchStateDefinition
 {
     public List<SwitchMacroStep> Sequence { get; set; } = new();
+    public bool RepeatWhileHeld { get; set; }
     public List<SwitchGestureStep> Gesture { get; set; } = new();
     public string FlapRole { get; set; } = "None";
     public string Name { get; set; } = "STATE";
@@ -60,9 +62,9 @@ internal sealed class InputCondition
     public bool RequiredState { get; set; }
 }
 
-internal sealed record PhysicalJoystick(int Id, string Name, uint ButtonMask, bool Connected)
+internal sealed record PhysicalJoystick(int Id, string Name, UInt128 ButtonMask, bool Connected, Guid InstanceGuid = default)
 {
-    public bool Button(int oneBasedButton) => oneBasedButton is >= 1 and <= 32 && (ButtonMask & (1u << (oneBasedButton - 1))) != 0;
+    public bool Button(int oneBasedButton) => oneBasedButton is >= 1 and <= 128 && (ButtonMask & ((UInt128)1 << (oneBasedButton - 1))) != 0;
 }
 
 internal static class WinMmJoystickReader
@@ -243,8 +245,8 @@ internal sealed partial class AdvancedSwitchService : IDisposable
         public int? ActiveIndex;
         public int? CandidateIndex;
         public DateTime CandidateSince;
-        public uint? InitialMask;
-        public uint? PreviousMask;
+        public UInt128? InitialMask;
+        public UInt128? PreviousMask;
         public bool InitialHandled;
         public bool Armed;
         public FlapKeySequence? FlapKeys;
@@ -258,12 +260,20 @@ internal sealed partial class AdvancedSwitchService : IDisposable
     private readonly Func<SwitchDefinition, PhysicalJoystick?>? _reader;
     private readonly Func<DateTime> _utcNow;
     private readonly Action<Keys, string> _keyboardTap;
+    private readonly Action<Keys, string> _sequenceKeyboardTap;
     public AdvancedSwitchSettings Settings { get; }
     public event Action<string>? StatusChanged;
     public string LastStatus { get; private set; } = AppText.T("en", "Switch.Ready");
     public string LanguageCode { get; set; } = "en";
 
-    public AdvancedSwitchService(string settingsPath) : this(settingsPath, new VJoySwitchOutput(), null, () => DateTime.UtcNow) { }
+    private static Func<DateTime> MonotonicClock()
+    {
+        DateTime start = DateTime.UtcNow;
+        long timestamp = System.Diagnostics.Stopwatch.GetTimestamp();
+        return () => start + System.Diagnostics.Stopwatch.GetElapsedTime(timestamp);
+    }
+
+    public AdvancedSwitchService(string settingsPath) : this(settingsPath, new VJoySwitchOutput(), null, MonotonicClock()) { }
 
     internal AdvancedSwitchService(string settingsPath, IInputOutput output,
         Func<SwitchDefinition, PhysicalJoystick?>? reader, Func<DateTime> utcNow, Action<Keys, string>? keyboardTap = null)
@@ -288,6 +298,7 @@ internal sealed partial class AdvancedSwitchService : IDisposable
         _reader = reader;
         _utcNow = utcNow;
         _keyboardTap = keyboardTap ?? KeyboardSwitchOutput.Tap;
+        _sequenceKeyboardTap = keyboardTap ?? ((key, language) => KeyboardTapSender.Tap(key, language, SwitchMacroRuntime.PressDurationMs));
         foreach (var definition in Settings.Switches) definition.AdvancedFlaps ??= new();
         foreach (var definition in Settings.Switches.Where(d => d.AdvancedFlaps.Enabled))
         {
@@ -369,7 +380,7 @@ internal sealed partial class AdvancedSwitchService : IDisposable
             }
             if (runtime.FlapKeys is not null)
                 _runtime[definition.Id] = runtime = new Runtime();
-            uint mask = device.ButtonMask;
+            UInt128 mask = device.ButtonMask;
             runtime.InitialMask ??= mask;
             runtime.PreviousMask ??= mask;
             bool moved = runtime.PreviousMask.Value != mask;
@@ -412,7 +423,7 @@ internal sealed partial class AdvancedSwitchService : IDisposable
         }
     }
 
-    public string GetCurrentState(SwitchDefinition definition, out uint mask, out bool connected)
+    public string GetCurrentState(SwitchDefinition definition, out UInt128 mask, out bool connected)
     {
         PhysicalJoystick? device = ResolveDevice(definition);
         connected = device is not null;
@@ -436,17 +447,17 @@ internal sealed partial class AdvancedSwitchService : IDisposable
     private PhysicalJoystick? ResolveDevice(SwitchDefinition definition)
     {
         if (_reader is not null) return _reader(definition);
-        PhysicalJoystick? direct = WinMmJoystickReader.Read(definition.DeviceId, definition.DeviceName);
-        if (direct is not null && string.Equals(direct.Name, definition.DeviceName, StringComparison.OrdinalIgnoreCase)) return direct;
-        PhysicalJoystick? byName = WinMmJoystickReader.Enumerate().FirstOrDefault(d => string.Equals(d.Name, definition.DeviceName, StringComparison.OrdinalIgnoreCase));
-        if (byName is not null && byName.Id != definition.DeviceId)
+        PhysicalJoystick? device = ControlsJoystickReader.Read(definition.DeviceId, definition.DeviceName, definition.DeviceGuid);
+        if (device is null || !string.Equals(device.Name, definition.DeviceName, StringComparison.OrdinalIgnoreCase)) return null;
+        if (definition.DeviceGuid != device.InstanceGuid || definition.DeviceId != device.Id)
         {
-            definition.DeviceId = byName.Id;
+            definition.DeviceGuid = device.InstanceGuid;
+            definition.DeviceId = device.Id;
             try { Save(); } catch { }
         }
-        // A re-enumerated slot can belong to an entirely different controller.
-        return byName;
+        return device;
     }
+
     private int? DetectState(SwitchDefinition definition, PhysicalJoystick device)
     {
         for (int i = 0; i < definition.States.Count; i++)
@@ -757,7 +768,7 @@ internal sealed class AdvancedSwitchManagerForm : Form
         detectedDevice = null;
         detectedButton = 0;
         pressed = false;
-        List<PhysicalJoystick> baseline = WinMmJoystickReader.Enumerate();
+        List<PhysicalJoystick> baseline = ControlsJoystickReader.Enumerate();
         if (baseline.Count == 0)
         {
             MessageBox.Show(owner, AppText.T(languageCode, "Switch.NoJoystick"), title, MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -793,16 +804,16 @@ internal sealed class AdvancedSwitchManagerForm : Form
         {
             foreach (PhysicalJoystick before in baseline)
             {
-                PhysicalJoystick? now = WinMmJoystickReader.Read(before.Id, before.Name);
+                PhysicalJoystick? now = ControlsJoystickReader.Read(before.Id, before.Name, before.InstanceGuid);
                 if (now is null) continue;
-                uint changed = before.ButtonMask ^ now.ButtonMask;
+                UInt128 changed = before.ButtonMask ^ now.ButtonMask;
                 if (changed == 0) continue;
-                for (int bit = 0; bit < 32; bit++)
+                for (int bit = 0; bit < 128; bit++)
                 {
-                    if ((changed & (1u << bit)) == 0) continue;
+                    if ((changed & ((UInt128)1 << bit)) == 0) continue;
                     foundDevice = now;
                     foundButton = bit + 1;
-                    foundPressed = (now.ButtonMask & (1u << bit)) != 0;
+                    foundPressed = (now.ButtonMask & ((UInt128)1 << bit)) != 0;
                     live.Text = $"B{foundButton}={(foundPressed ? "ON" : "OFF")}";
                     timer.Stop();
                     learn.DialogResult = DialogResult.OK;
@@ -824,13 +835,14 @@ internal sealed class AdvancedSwitchManagerForm : Form
 
     internal static SwitchDefinition CreateActionSwitch(string name, PhysicalJoystick device, int physicalButton, int onActionButton, int offActionButton, bool enabled)
     {
-        physicalButton = Math.Clamp(physicalButton, 1, 32);
+        physicalButton = Math.Clamp(physicalButton, 1, 128);
         onActionButton = Math.Clamp(onActionButton, 1, 32);
         offActionButton = Math.Clamp(offActionButton, 1, 32);
         return new SwitchDefinition
         {
             Name = name,
             DeviceId = device.Id,
+            DeviceGuid = device.InstanceGuid,
             DeviceName = device.Name,
             SwitchType = "PhysicalAction",
             Enabled = enabled,
@@ -871,7 +883,7 @@ internal sealed class AdvancedSwitchManagerForm : Form
 
     internal static int InferPhysicalButton(SwitchDefinition d)
     {
-        if (d.PhysicalButton is >= 1 and <= 32) return d.PhysicalButton;
+        if (d.PhysicalButton is >= 1 and <= 128) return d.PhysicalButton;
         return d.States.SelectMany(s => s.Conditions).FirstOrDefault(c => c.RequiredState)?.ButtonId
             ?? d.States.SelectMany(s => s.Conditions).FirstOrDefault()?.ButtonId
             ?? 0;
@@ -1012,7 +1024,7 @@ internal sealed partial class SwitchEditorForm : Form
     private readonly Label _live = new();
     private readonly System.Windows.Forms.Timer _liveTimer = new() { Interval = 80 };
     private List<PhysicalJoystick> _devices = new();
-    private uint? _lastLiveMask;
+    private UInt128? _lastLiveMask;
 
     public SwitchEditorForm(SwitchDefinition definition) : this(definition, "en") { }
 
@@ -1202,10 +1214,10 @@ internal sealed partial class SwitchEditorForm : Form
 
     private void RefreshDevices()
     {
-        _devices = WinMmJoystickReader.Enumerate();
+        _devices = ControlsJoystickReader.Enumerate();
         _device.Items.Clear();
-        foreach (PhysicalJoystick d in _devices) _device.Items.Add($"{d.Id + 1}: {d.Name}");
-        int selected = _devices.FindIndex(d => d.Id == _definition.DeviceId && (string.Equals(d.Name, _definition.DeviceName, StringComparison.OrdinalIgnoreCase) || _devices.Count == 1));
+        foreach (PhysicalJoystick d in _devices) _device.Items.Add(d.Name);
+        int selected = _devices.FindIndex(d => (_definition.DeviceGuid != Guid.Empty ? d.InstanceGuid == _definition.DeviceGuid : string.Equals(d.Name, _definition.DeviceName, StringComparison.OrdinalIgnoreCase)));
         if (selected < 0 && _devices.Count > 0) selected = 0;
         if (selected >= 0) _device.SelectedIndex = selected;
     }
@@ -1217,7 +1229,7 @@ internal sealed partial class SwitchEditorForm : Form
         if (index < 0)
         {
             _devices.Add(device);
-            _device.Items.Add($"{device.Id + 1}: {device.Name}");
+            _device.Items.Add(device.Name);
             index = _devices.Count - 1;
         }
         _device.SelectedIndex = index;
@@ -1272,15 +1284,15 @@ internal sealed partial class SwitchEditorForm : Form
             LearnFlapPositions(rows);
             return;
         }
-        List<uint> masks = new();
+        List<UInt128> masks = new();
         foreach (DataGridViewRow row in rows)
         {
             string position = Convert.ToString(row.Cells["State"].Value) ?? T("Switch.PositionFallback");
-            if (!CaptureMask(position, out uint mask)) return;
+            if (!CaptureMask(position, out UInt128 mask)) return;
             masks.Add(mask);
         }
-        uint varying = 0;
-        foreach (uint mask in masks.Skip(1)) varying |= masks[0] ^ mask;
+        UInt128 varying = 0;
+        foreach (UInt128 mask in masks.Skip(1)) varying |= masks[0] ^ mask;
         if (varying == 0)
         {
             MessageBox.Show(this, T("Switch.NoDifferences"), T("Switch.Learn"), MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -1289,15 +1301,15 @@ internal sealed partial class SwitchEditorForm : Form
         for (int r = 0; r < rows.Count; r++)
         {
             List<InputCondition> conditions = new();
-            for (int bit = 0; bit < 32; bit++)
-                if ((varying & (1u << bit)) != 0)
-                    conditions.Add(new InputCondition { ButtonId = bit + 1, RequiredState = (masks[r] & (1u << bit)) != 0 });
+            for (int bit = 0; bit < 128; bit++)
+                if ((varying & ((UInt128)1 << bit)) != 0)
+                    conditions.Add(new InputCondition { ButtonId = bit + 1, RequiredState = (masks[r] & ((UInt128)1 << bit)) != 0 });
             rows[r].Cells["Conditions"].Value = FormatConditions(conditions);
         }
         UpdateRowSummaries();
     }
 
-    private bool CaptureMask(string position, out uint mask)
+    private bool CaptureMask(string position, out UInt128 mask)
     {
         mask = 0;
         PhysicalJoystick deviceInfo = _devices[_device.SelectedIndex];
@@ -1307,11 +1319,11 @@ internal sealed partial class SwitchEditorForm : Form
         l.TextAlign = ContentAlignment.MiddleCenter;
         Button capture = AdvancedSwitchManagerForm.B(T("Switch.Capture"));
         capture.SetBounds(215, 184, 190, 44);
-        uint captured = 0;
+        UInt128 captured = 0;
         bool ok = false;
         capture.Click += (_, _) =>
         {
-            PhysicalJoystick? d = WinMmJoystickReader.Read(deviceInfo.Id, deviceInfo.Name);
+            PhysicalJoystick? d = ControlsJoystickReader.Read(deviceInfo.Id, deviceInfo.Name, deviceInfo.InstanceGuid);
             if (d is null)
             {
                 MessageBox.Show(f, T("Switch.DeviceNotConnected"), T("Switch.Learn"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -1427,7 +1439,7 @@ internal sealed partial class SwitchEditorForm : Form
             return;
         }
         PhysicalJoystick selected = _devices[_device.SelectedIndex];
-        PhysicalJoystick? current = WinMmJoystickReader.Read(selected.Id, selected.Name);
+        PhysicalJoystick? current = ControlsJoystickReader.Read(selected.Id, selected.Name, selected.InstanceGuid);
         if (current is null)
         {
             _live.Text = T("Switch.LiveDisconnected");
@@ -1440,16 +1452,16 @@ internal sealed partial class SwitchEditorForm : Form
             _live.Text = T("Switch.LiveWaiting");
             return;
         }
-        uint changed = _lastLiveMask.Value ^ current.ButtonMask;
+        UInt128 changed = _lastLiveMask.Value ^ current.ButtonMask;
         _lastLiveMask = current.ButtonMask;
         if (changed == 0)
         {
             _live.Text = T("Switch.LiveIdle");
             return;
         }
-        string raw = string.Join("  ", Enumerable.Range(1, 32)
-            .Where(i => (changed & (1u << (i - 1))) != 0)
-            .Select(i => $"B{i}={(((current.ButtonMask & (1u << (i - 1))) != 0) ? "ON" : "OFF")}"));
+        string raw = string.Join("  ", Enumerable.Range(1, 128)
+            .Where(i => (changed & ((UInt128)1 << (i - 1))) != 0)
+            .Select(i => $"B{i}={(((current.ButtonMask & ((UInt128)1 << (i - 1))) != 0) ? "ON" : "OFF")}"));
         _live.Text = string.Format(CultureInfo.CurrentCulture, T("Switch.LiveChanged"), raw);
     }
 
@@ -1469,6 +1481,7 @@ internal sealed partial class SwitchEditorForm : Form
             }
             row.Cells["Summary"].Value = row.Tag is SwitchStateDefinition custom && custom.Sequence.Count > 0
                 ? (custom.FlapRole == "None" ? "" : custom.FlapRole + ": ") +
+                    (custom.RepeatWhileHeld ? T("Switch.RepeatWhileHeld") + " | " : "") +
                     string.Join("; ", custom.Sequence.Select(s => $"{s.Key} x{s.Repeat} / {s.IntervalMs}ms")) +
                     (custom.Gesture.Count > 0 ? $" | Gesture {custom.Gesture.Count} steps, {custom.Gesture[^1].ElapsedMs}ms" : "")
                 : SummarizeAction(kind, action);
@@ -1517,6 +1530,8 @@ internal sealed partial class SwitchEditorForm : Form
                 MessageBox.Show(this, T("Switch.StateNeedsCondition"), T("Switch.Builder"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return false;
             }
+            if (row.Tag is SwitchStateDefinition { RepeatWhileHeld: true } && !conditions.Any(c => c.RequiredState))
+            { MessageBox.Show(this, T("Switch.RepeatNeedsHeldButton"), T("Switch.Builder"), MessageBoxButtons.OK, MessageBoxIcon.Warning); return false; }
             if (row.Tag is SwitchStateDefinition recorded && recorded.Gesture.Count > 0 && recorded.Sequence.Count == 0)
             { MessageBox.Show(this, T("Switch.GestureNeedsSequence"), T("Switch.SequenceTitle"), MessageBoxButtons.OK, MessageBoxIcon.Warning); return false; }
             if (row.Tag is SwitchStateDefinition macro && macro.Sequence.Count > 0 || row.Tag is SwitchStateDefinition unchanged &&
@@ -1564,6 +1579,7 @@ internal sealed partial class SwitchEditorForm : Form
         _definition.AdvancedFlaps = _flapsDraft;
         _definition.Name = _name.Text.Trim();
         _definition.DeviceId = d.Id;
+        _definition.DeviceGuid = d.InstanceGuid;
         _definition.DeviceName = d.Name;
         _definition.SwitchType = states.Count == 2 ? "2-State" : states.Count == 3 ? "3-State" : "Custom / Multi-State";
         _definition.Enabled = _enabled.Checked;
@@ -1587,7 +1603,7 @@ internal sealed partial class SwitchEditorForm : Form
         foreach (string part in text.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             string[] pair = part.Split('=', 2, StringSplitOptions.TrimEntries);
-            if (pair.Length != 2 || !int.TryParse(pair[0].Replace("Button", "", StringComparison.OrdinalIgnoreCase).Trim(), out int id) || id is < 1 or > 32)
+            if (pair.Length != 2 || !int.TryParse(pair[0].Replace("Button", "", StringComparison.OrdinalIgnoreCase).Trim(), out int id) || id is < 1 or > 128)
             { if (strict) throw new FormatException(string.Format(CultureInfo.CurrentCulture, T("Switch.InvalidCondition"), part)); else continue; }
             bool required = pair[1].Equals("ON", StringComparison.OrdinalIgnoreCase) || pair[1].Equals("TRUE", StringComparison.OrdinalIgnoreCase) || pair[1] == "1";
             if (!required && !pair[1].Equals("OFF", StringComparison.OrdinalIgnoreCase) && !pair[1].Equals("FALSE", StringComparison.OrdinalIgnoreCase) && pair[1] != "0")
@@ -1630,10 +1646,10 @@ internal sealed class SwitchTestForm : Form
     }
     private void UpdateLive()
     {
-        string current = _service.GetCurrentState(_definition, out uint mask, out bool connected);
+        string current = _service.GetCurrentState(_definition, out UInt128 mask, out bool connected);
         if (current != _previous) { _transition.Text = string.Format(CultureInfo.CurrentCulture, T("Switch.Transition"), _previous.Length == 0 ? "-" : _previous, current); _previous = current; }
         _state.Text = string.Format(CultureInfo.CurrentCulture, T("Switch.PhysicalState"), current.ToUpperInvariant());
-        List<string> raw = new(); for (int i = 1; i <= 32; i++) if ((mask & (1u << (i - 1))) != 0 || _definition.States.SelectMany(s => s.Conditions).Any(c => c.ButtonId == i)) raw.Add($"Button {i}: {(((mask & (1u << (i - 1))) != 0) ? "ON" : "OFF")}");
+        List<string> raw = new(); for (int i = 1; i <= 128; i++) if ((mask & ((UInt128)1 << (i - 1))) != 0 || _definition.States.SelectMany(s => s.Conditions).Any(c => c.ButtonId == i)) raw.Add($"Button {i}: {(((mask & ((UInt128)1 << (i - 1))) != 0) ? "ON" : "OFF")}");
         _raw.Text = connected ? string.Format(CultureInfo.CurrentCulture, T("Switch.RawButtons"), string.Join("   ", raw)) : T("Switch.RawDisconnected");
         SwitchStateDefinition? state = _definition.States.FirstOrDefault(s => s.Name.Equals(current, StringComparison.OrdinalIgnoreCase)); _action.Text = state is null ? T("Switch.ActionNone") : string.Format(CultureInfo.CurrentCulture, T("Switch.ActionDetail"), state.Behavior, state.OutputKind == SwitchActionKind.KeyboardKey ? ("KEY " + state.OutputKey.ToUpperInvariant()) : ("VB" + state.OutputButton.ToString(CultureInfo.InvariantCulture)), state.Trigger);
     }

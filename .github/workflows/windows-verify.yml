@@ -31,3 +31,11 @@ jobs:
           name: WTAssistant-Windows-verified
           path: Builds/WTAssistant/**
           if-no-files-found: error
+
+      - name: Verify controller inputs and repeat timing
+        shell: pwsh
+        run: |
+          dotnet publish Tests/ControlsInput.Tests/ControlsInput.Tests.csproj -c Release -p:Platform=x86 -r win-x86 --self-contained true -o artifacts/controls-tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./artifacts/controls-tests/ControlsInput.Tests.exe
+          exit $LASTEXITCODE

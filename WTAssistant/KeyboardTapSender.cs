@@ -6,7 +6,10 @@ namespace WTVRSettingsAssistant;
 internal static class KeyboardTapSender
 {
     private static int _pendingKeyboardReleases;
+    private static long _lastKeyboardReleaseAt;
     internal static bool KeyboardTapInProgress => Volatile.Read(ref _pendingKeyboardReleases) > 0;
+    internal static bool SequenceTapReady => !KeyboardTapInProgress &&
+        Environment.TickCount64 - Volatile.Read(ref _lastKeyboardReleaseAt) >= 20;
     [StructLayout(LayoutKind.Sequential)]
     private struct Input
     {
@@ -100,7 +103,7 @@ internal static class KeyboardTapSender
         return false;
     }
 
-    public static bool TryTap(Keys key, string languageCode, out string? error)
+    public static bool TryTap(Keys key, string languageCode, out string? error, int durationMs = 90)
     {
         int virtualKey = (int)(key & Keys.KeyCode);
         if (virtualKey == 0)
@@ -127,9 +130,10 @@ internal static class KeyboardTapSender
         {
             try
             {
-                await Task.Delay(90).ConfigureAwait(false);
+                await Task.Delay(Math.Clamp(durationMs, 10, 500)).ConfigureAwait(false);
                 Input up = new() { Type = InputKeyboard, Data = new InputUnion { Keyboard = new KeybdInput { ScanCode = scanCode, Flags = flags | KeyEventKeyUp } } };
                 SendInput(1, [up], Marshal.SizeOf<Input>());
+                Interlocked.Exchange(ref _lastKeyboardReleaseAt, Environment.TickCount64);
             }
             finally { Interlocked.Decrement(ref _pendingKeyboardReleases); }
         });
@@ -184,9 +188,9 @@ internal static class KeyboardTapSender
         _ => null
     };
 
-    public static void Tap(Keys key, string languageCode)
+    public static void Tap(Keys key, string languageCode, int durationMs = 90)
     {
-        if (!TryTap(key, languageCode, out string? error)) throw new InvalidOperationException(error);
+        if (!TryTap(key, languageCode, out string? error, durationMs)) throw new InvalidOperationException(error);
     }
 
     private static bool IsExtended(Keys key) => key is Keys.Insert or Keys.Delete or Keys.Home or Keys.End or Keys.PageUp or Keys.PageDown

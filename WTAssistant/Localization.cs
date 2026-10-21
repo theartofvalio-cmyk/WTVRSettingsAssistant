@@ -13,6 +13,7 @@ internal static partial class AppText
         AddRelease21Translations();
         AddRelease21LateTranslations();
         AddHoverKeybindTranslations();
+        AddControlsInputTranslations();
         ApplyCurrentReleaseNotes();
     }
     private static readonly LanguageOption[] Options =

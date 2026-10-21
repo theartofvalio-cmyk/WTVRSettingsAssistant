@@ -25,12 +25,12 @@ internal sealed partial class SwitchEditorForm
     private bool ValidateFlaps(List<SwitchStateDefinition> states) => true;
     private static string FormatGesture(SwitchStateDefinition state)
     {
-        uint varying = 0;
-        foreach (var step in state.Gesture) varying |= step.Mask ^ state.Gesture[0].Mask;
+        UInt128 varying = 0;
+        foreach (var step in state.Gesture) varying |= step.Buttons ^ state.Gesture[0].Buttons;
         return string.Join(Environment.NewLine, state.Gesture.Select((step, index) =>
-            $"{index + 1}. {step.ElapsedMs} ms: " + FormatConditions(Enumerable.Range(1, 32)
-                .Where(b => (varying & (1u << (b - 1))) != 0)
-                .Select(b => new InputCondition { ButtonId = b, RequiredState = (step.Mask & (1u << (b - 1))) != 0 }))));
+            $"{index + 1}. {step.ElapsedMs} ms: " + FormatConditions(Enumerable.Range(1, 128)
+                .Where(b => (varying & ((UInt128)1 << (b - 1))) != 0)
+                .Select(b => new InputCondition { ButtonId = b, RequiredState = (step.Buttons & ((UInt128)1 << (b - 1))) != 0 }))));
     }
     private void LearnFlapPositions(List<DataGridViewRow> rows) { }
     protected override void Dispose(bool disposing)
@@ -42,6 +42,11 @@ internal sealed partial class SwitchEditorForm
         var draft = row.Tag is SwitchStateDefinition saved
             ? JsonSerializer.Deserialize<SwitchStateDefinition>(JsonSerializer.Serialize(saved))!
             : new SwitchStateDefinition();
+        try { draft.Conditions = ParseConditions(Convert.ToString(row.Cells["Conditions"].Value) ?? "", true); }
+        catch (FormatException ex)
+        { MessageBox.Show(this, ex.Message, T("Switch.Builder"), MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
+        if (string.IsNullOrWhiteSpace(draft.OutputKey))
+            draft.OutputKey = Convert.ToString(row.Cells["Action"].Value) ?? "";
         using var dialog = new SwitchSequenceForm(draft, _languageCode);
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         row.Tag = draft;
@@ -61,12 +66,12 @@ internal sealed partial class SwitchEditorForm
         int firstMovement = gesture[1].ElapsedMs;
         gesture[0].ElapsedMs = 0;
         for (int i = 1; i < gesture.Count; i++) gesture[i].ElapsedMs -= firstMovement;
-        uint varying = 0;
-        foreach (var step in gesture) varying |= step.Mask ^ gesture[0].Mask;
+        UInt128 varying = 0;
+        foreach (var step in gesture) varying |= step.Buttons ^ gesture[0].Buttons;
         if (varying == 0) return;
-        foreach (var step in gesture) step.Mask &= varying;
-        var conditions = Enumerable.Range(1, 32).Where(b => (varying & (1u << (b - 1))) != 0)
-            .Select(b => new InputCondition { ButtonId = b, RequiredState = (gesture[^1].Mask & (1u << (b - 1))) != 0 }).ToList();
+        foreach (var step in gesture) step.Buttons &= varying;
+        var conditions = Enumerable.Range(1, 128).Where(b => (varying & ((UInt128)1 << (b - 1))) != 0)
+            .Select(b => new InputCondition { ButtonId = b, RequiredState = (gesture[^1].Buttons & ((UInt128)1 << (b - 1))) != 0 }).ToList();
         var state = new SwitchStateDefinition
         {
             Name = "Gesture " + (_states.Rows.Count + 1), Conditions = conditions,

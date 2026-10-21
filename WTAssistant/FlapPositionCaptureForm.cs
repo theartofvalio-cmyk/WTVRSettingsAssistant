@@ -3,14 +3,14 @@ namespace WTVRSettingsAssistant;
 internal sealed class FlapPositionCaptureForm : Form
 {
     public List<InputCondition>[] Result { get; private set; } = [];
-    internal static List<InputCondition>[]? BuildConditions(uint[] masks)
+    internal static List<InputCondition>[]? BuildConditions(UInt128[] masks)
     {
         if (masks.Length != 3 || masks.Distinct().Count() != 3) return null;
-        uint varying = (masks[0] ^ masks[1]) | (masks[0] ^ masks[2]);
+        UInt128 varying = (masks[0] ^ masks[1]) | (masks[0] ^ masks[2]);
         // A two-button three-way switch has a released neutral and separate ends.
         if ((masks[1] & varying) != 0 || (masks[0] & masks[2] & varying) != 0) return null;
-        return masks.Select(mask => Enumerable.Range(0, 32).Where(bit => (varying & (1u << bit)) != 0)
-            .Select(bit => new InputCondition { ButtonId = bit + 1, RequiredState = (mask & (1u << bit)) != 0 }).ToList()).ToArray();
+        return masks.Select(mask => Enumerable.Range(0, 128).Where(bit => (varying & ((UInt128)1 << bit)) != 0)
+            .Select(bit => new InputCondition { ButtonId = bit + 1, RequiredState = (mask & ((UInt128)1 << bit)) != 0 }).ToList()).ToArray();
     }
 
     internal FlapPositionCaptureForm(string[] names, PhysicalJoystick device, string language)
@@ -37,8 +37,8 @@ internal sealed class FlapPositionCaptureForm : Form
         var cancel = new Button { AutoSize = true, Text = AppText.T(language, "Common.Cancel"), DialogResult = DialogResult.Cancel };
         buttons.Controls.AddRange([save, capture, cancel]);
         root.Controls.Add(prompt); root.Controls.Add(list); root.Controls.Add(live); root.Controls.Add(status); root.Controls.Add(buttons); Controls.Add(root);
-        uint?[] masks = new uint?[3];
-        string Mask(uint mask) => mask == 0 ? T("Released") : string.Join(", ", Enumerable.Range(1, 32).Where(b => (mask & (1u << (b - 1))) != 0).Select(b => "BTN" + b));
+        UInt128?[] masks = new UInt128?[3];
+        string Mask(UInt128 mask) => mask == 0 ? T("Released") : string.Join(", ", Enumerable.Range(1, 128).Where(b => (mask & ((UInt128)1 << (b - 1))) != 0).Select(b => "BTN" + b));
         for (int i = 0; i < 3; i++) list.Items.Add(new ListViewItem([names[i], T("NotCaptured"), "-"]));
         list.Items[0].Selected = true;
         int Selected() => list.SelectedIndices.Count == 1 ? list.SelectedIndices[0] : 0;
@@ -52,7 +52,7 @@ internal sealed class FlapPositionCaptureForm : Form
         list.SelectedIndexChanged += (_, _) => RefreshPrompt();
         capture.Click += (_, _) =>
         {
-            var current = WinMmJoystickReader.Read(device.Id, device.Name);
+            var current = ControlsJoystickReader.Read(device.Id, device.Name, device.InstanceGuid);
             if (current is null || current.Name != device.Name) { status.Text = T("CaptureDisconnected"); return; }
             int i = Selected(); masks[i] = current.ButtonMask;
             list.Items[i].SubItems[1].Text = T("Captured"); list.Items[i].SubItems[2].Text = Mask(current.ButtonMask);
@@ -70,7 +70,7 @@ internal sealed class FlapPositionCaptureForm : Form
         var timer = new System.Windows.Forms.Timer { Interval = 100 };
         timer.Tick += (_, _) =>
         {
-            var current = WinMmJoystickReader.Read(device.Id, device.Name);
+            var current = ControlsJoystickReader.Read(device.Id, device.Name, device.InstanceGuid);
             capture.Enabled = current is not null && current.Name == device.Name;
             live.Text = current is null ? T("CaptureDisconnected") : T("LiveButtons") + " " + Mask(current.ButtonMask);
         };

@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace WTVRSettingsAssistant;
 
 internal sealed class SwitchMacroStep
@@ -8,41 +10,53 @@ internal sealed class SwitchMacroStep
 }
 internal sealed class SwitchGestureStep
 {
+    // Preserve the original low word so existing gesture files still load exactly.
     public uint Mask { get; set; }
+    public uint Mask32 { get; set; }
+    public uint Mask64 { get; set; }
+    public uint Mask96 { get; set; }
+    [JsonIgnore]
+    public UInt128 Buttons
+    {
+        get => Mask | ((UInt128)Mask32 << 32) | ((UInt128)Mask64 << 64) | ((UInt128)Mask96 << 96);
+        set { Mask = (uint)value; Mask32 = (uint)(value >> 32); Mask64 = (uint)(value >> 64); Mask96 = (uint)(value >> 96); }
+    }
     public int ElapsedMs { get; set; }
 }
 
 internal sealed class SwitchMacroRuntime
 {
-    private uint? _mask;
-    private uint? _settledMask;
+    private UInt128? _mask;
+    private UInt128? _settledMask;
     private DateTime _changed, _last, _next;
-    private readonly List<(uint Mask, DateTime Time)> _history = new();
+    private readonly List<(UInt128 Mask, DateTime Time)> _history = new();
     private readonly Queue<(string Key, int Interval)> _output = new();
     private int? _pendingRow;
     private bool _initial = true;
     public int? ActiveRow { get; private set; }
-    private bool _waitingForRelease;
-    private int _delayAfterRelease;
+    // Intervals are measured between press starts, rather than after key release.
+    internal const int PressDurationMs = 20;
+    internal const int MinimumIntervalMs = 40;
+    private SwitchStateDefinition? _repeatRow;
     public void Reset()
-    { _mask = null; _settledMask = null; _history.Clear(); _output.Clear(); _pendingRow = null; _initial = true; _next = default; ActiveRow = null; _waitingForRelease = false; }
-    public string? Step(SwitchDefinition definition, uint mask, DateTime now, int debounce, bool outputReady = true)
+    { _mask = null; _settledMask = null; _history.Clear(); _output.Clear(); _pendingRow = null; _initial = true; _next = default; ActiveRow = null; _repeatRow = null; _last = default; }
+    public string? Step(SwitchDefinition definition, UInt128 mask, DateTime now, int debounce, bool outputReady = true)
     {
         if (_last != default && (now < _last || now - _last > TimeSpan.FromSeconds(1))) Reset();
         _last = now;
-        uint relevant = 0;
+        UInt128 relevant = 0;
         foreach (var c in definition.States.SelectMany(s => s.Conditions))
-            if (c.ButtonId is >= 1 and <= 32) relevant |= 1u << (c.ButtonId - 1);
+            if (c.ButtonId is >= 1 and <= 128) relevant |= (UInt128)1 << (c.ButtonId - 1);
         foreach (var s in definition.States.Where(s => s.Gesture.Count > 1))
-            foreach (var g in s.Gesture) relevant |= g.Mask ^ s.Gesture[0].Mask;
+            foreach (var g in s.Gesture) relevant |= g.Buttons ^ s.Gesture[0].Buttons;
         mask &= relevant;
         var gestures = definition.States.Where(s => s.Gesture.Count > 1).ToList();
         int grace = gestures.Count == 0 ? debounce : Math.Min(10000, gestures.Max(s => s.Gesture[^1].ElapsedMs) * 3 / 2 + 100);
         if (_mask != mask)
         {
-            uint? previousMask = _settledMask;
+            UInt128? previousMask = _settledMask;
             _mask = mask; _changed = now;
-            _output.Clear();
+            _output.Clear(); _repeatRow = null; _next = default;
             _history.Add((mask, now));
             if (_history.Count > 64) _history.RemoveAt(0);
             // An unchanged OFF condition must not steal another button's transition.
@@ -61,12 +75,12 @@ internal sealed class SwitchMacroRuntime
                     int start = _history.Count - row.Gesture.Count;
                     if (start < 0) continue;
                     bool match = true;
-                    uint gestureMask = 0;
-                    foreach (var step in row.Gesture) gestureMask |= step.Mask ^ row.Gesture[0].Mask;
+                    UInt128 gestureMask = 0;
+                    foreach (var step in row.Gesture) gestureMask |= step.Buttons ^ row.Gesture[0].Buttons;
                     for (int i = 0; i < row.Gesture.Count; i++)
                     {
                         var actual = _history[start + i];
-                        match &= (actual.Mask & gestureMask) == (row.Gesture[i].Mask & gestureMask);
+                        match &= (actual.Mask & gestureMask) == (row.Gesture[i].Buttons & gestureMask);
                         // Initial position can be held indefinitely before starting.
                         if (i > 1)
                         {
@@ -89,30 +103,36 @@ internal sealed class SwitchMacroRuntime
             // the origin used to choose between different return-to-neutral rows.
             _settledMask = mask;
         }
-        if (!outputReady) return null;
-        if (_waitingForRelease)
-        {
-            _waitingForRelease = false;
-            _next = now.AddMilliseconds(_delayAfterRelease);
-        }
-        if (_output.Count == 0 || now < _next) return null;
+        if (_output.Count == 0 && _repeatRow is not null && Matches(_repeatRow, mask))
+            Enqueue(_repeatRow);
+        if (!outputReady || _output.Count == 0 || now < _next) return null;
         var item = _output.Dequeue();
-        _delayAfterRelease = item.Interval; _waitingForRelease = true;
+        // Keep the average cadence without accumulating poll latency. If the app
+        // stalls, skip missed deadlines instead of delivering a burst of presses.
+        int interval = Math.Clamp(item.Interval, MinimumIntervalMs, 5000);
+        _next = _next == default ? now.AddMilliseconds(interval) : _next.AddMilliseconds(interval);
+        if (_next <= now) _next = now.AddMilliseconds(interval);
         return item.Key;
     }
-    private static bool Matches(SwitchStateDefinition state, uint mask) =>
-        state.Conditions.All(c => c.ButtonId is >= 1 and <= 32 &&
-            ((mask & (1u << (c.ButtonId - 1))) != 0) == c.RequiredState);
+
+    private static bool Matches(SwitchStateDefinition state, UInt128 mask) =>
+        state.Conditions.All(c => c.ButtonId is >= 1 and <= 128 &&
+            ((mask & ((UInt128)1 << (c.ButtonId - 1))) != 0) == c.RequiredState);
 
     private void Queue(SwitchStateDefinition row)
     {
         if (row.Behavior == SwitchOutputBehavior.None && row.Sequence.Count == 0) return;
+        _output.Clear(); _next = default;
+        _repeatRow = row.RepeatWhileHeld && row.Conditions.Any(c => c.RequiredState) ? row : null;
+        Enqueue(row);
+    }
+
+    private void Enqueue(SwitchStateDefinition row)
+    {
         string legacyKey = row.OutputKind == SwitchActionKind.MouseButton ? "MOUSE:" + row.OutputKey :
             row.OutputKind == SwitchActionKind.VJoyButton ? "VJOY:" + row.OutputButton : row.OutputKey;
         var steps = row.Sequence.Count > 0 ? row.Sequence : !string.IsNullOrWhiteSpace(legacyKey)
                 ? new List<SwitchMacroStep> { new() { Key = legacyKey } } : new();
-        // A new recognized action replaces unsent output, avoiding stale macros.
-        _output.Clear();
         foreach (var step in steps.Take(32))
             for (int i = 0; i < Math.Clamp(step.Repeat, 1, 20); i++)
                 _output.Enqueue((step.Key, Math.Clamp(step.IntervalMs, 0, 5000)));
@@ -127,7 +147,7 @@ internal sealed partial class AdvancedSwitchService
         if (!_flapGameFocused() || (_flapSuspensions > 0 && IsEditorForeground()))
         { runtime.Macro.Reset(); return; }
         string? key = runtime.Macro.Step(definition, device.ButtonMask, _utcNow(), Settings.DebounceMs,
-            !KeyboardTapSender.KeyboardTapInProgress);
+            KeyboardTapSender.SequenceTapReady);
         if (key is null) return;
         try
         {
@@ -136,7 +156,7 @@ internal sealed partial class AdvancedSwitchService
             if (key.StartsWith("VJOY:") && int.TryParse(key[5..], out int button))
             { _output.Pulse(button, Settings.PulseDurationMs); return; }
             if (!Enum.TryParse(key, true, out Keys parsed) || parsed == Keys.None) throw new InvalidOperationException("Invalid sequence key: " + key);
-            _keyboardTap(parsed, LanguageCode);
+            _sequenceKeyboardTap(parsed, LanguageCode);
             SetStatus(definition.Name + ": KEY " + key);
         }
         catch (Exception ex) { runtime.Macro.Reset(); SetStatus(definition.Name + ": " + ex.Message); }

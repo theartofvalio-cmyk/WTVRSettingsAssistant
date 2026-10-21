@@ -7,8 +7,8 @@ internal sealed class SwitchSequenceForm : Form
         string T(string key) => AppText.T(language, key);
 
         Text = T("Switch.SequenceTitle");
-        ClientSize = new Size(700, 460);
-        MinimumSize = new Size(650, 420);
+        ClientSize = new Size(760, 620);
+        MinimumSize = new Size(700, 600);
         StartPosition = FormStartPosition.CenterParent;
         BackColor = IllustratedTheme.Background;
         ForeColor = IllustratedTheme.Ivory;
@@ -17,11 +17,29 @@ internal sealed class SwitchSequenceForm : Form
         {
             Dock = DockStyle.Fill,
             Padding = new Padding(16),
-            RowCount = 2,
+            RowCount = 3,
             ColumnCount = 1
         };
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 96));
+
+        var repeat = new CheckBox
+        {
+            Text = T("Switch.RepeatWhileHeld"), Checked = row.RepeatWhileHeld,
+            Dock = DockStyle.Fill, AutoSize = true, ForeColor = IllustratedTheme.Ivory,
+            Name = "RepeatWhileHeld"
+        };
+        var timingHelp = new Label
+        {
+            Text = T("Switch.SequenceTimingHelp"), Dock = DockStyle.Fill, AutoSize = true,
+            ForeColor = IllustratedTheme.Ivory, Padding = new Padding(0, 6, 0, 0), Name = "TimingHelp"
+        };
+        var options = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 1, RowCount = 2 };
+        options.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        options.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        options.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        options.Controls.Add(repeat, 0, 0); options.Controls.Add(timingHelp, 0, 1);
 
         var grid = new DataGridView
         {
@@ -118,7 +136,14 @@ internal sealed class SwitchSequenceForm : Form
                 steps.Add(new SwitchMacroStep { Key = key.ToString(), Repeat = repeat, IntervalMs = interval });
             }
             if (steps.Count == 0) return;
+            if (repeat.Checked && !row.Conditions.Any(c => c.RequiredState))
+            {
+                MessageBox.Show(this, T("Switch.RepeatNeedsHeldButton"), T("Switch.SequenceTitle"),
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
             row.Sequence = steps;
+            row.RepeatWhileHeld = repeat.Checked;
             // Automated/telemetry-driven flap roles were intentionally removed from 2.1.
             row.FlapRole = "None";
             DialogResult = DialogResult.OK;
@@ -126,7 +151,8 @@ internal sealed class SwitchSequenceForm : Form
         Button(T("Common.Cancel"), () => DialogResult = DialogResult.Cancel);
 
         root.Controls.Add(grid, 0, 0);
-        root.Controls.Add(footer, 0, 1);
+        root.Controls.Add(options, 0, 1);
+        root.Controls.Add(footer, 0, 2);
         Controls.Add(root);
     }
 }
@@ -170,7 +196,7 @@ internal sealed class SwitchGestureRecorder : Form
         };
         timer.Tick += (_, _) =>
         {
-            PhysicalJoystick? current = WinMmJoystickReader.Read(device.Id, device.Name);
+            PhysicalJoystick? current = ControlsJoystickReader.Read(device.Id, device.Name, device.InstanceGuid);
             if (current is null)
             {
                 timer.Stop();
@@ -179,9 +205,9 @@ internal sealed class SwitchGestureRecorder : Form
                 return;
             }
             if (clock.ElapsedMilliseconds > 10000 || Result.Count >= 32) { stop.PerformClick(); return; }
-            if (Result.Count > 0 && Result[^1].Mask == current.ButtonMask) return;
+            if (Result.Count > 0 && Result[^1].Buttons == current.ButtonMask) return;
             int elapsed = (int)clock.ElapsedMilliseconds;
-            Result.Add(new SwitchGestureStep { Mask = current.ButtonMask, ElapsedMs = elapsed });
+            Result.Add(new SwitchGestureStep { Buttons = current.ButtonMask, ElapsedMs = elapsed });
             list.Items.Add(string.Format(System.Globalization.CultureInfo.CurrentCulture,
                 T("Switch.GestureLine"), elapsed, current.ButtonMask));
         };
