@@ -101,6 +101,11 @@ internal sealed class NeckAssistSettings
     public string MovementMode { get; set; } = "Simple";
     public int PressRotationAngle { get; set; } = 160;
     public int TransitionSpeed { get; set; } = 55;
+    public bool UnlockTransitionSpeed { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public int MaximumTransitionSpeed => UnlockTransitionSpeed ? 300 : 100;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public int EffectiveTransitionSpeed => Math.Clamp(TransitionSpeed, 1, MaximumTransitionSpeed);
     public string AdvancedActivationBehavior { get; set; } = "Toggle";
     public int SimpleDeadzoneAngle { get; set; } = 8;
 }
@@ -229,7 +234,7 @@ internal sealed class NeckAssistForm : Form
         // Always start each application session in Simple mode. Users may switch to Advanced explicitly.
         _settings.MovementMode = "Simple";
         _settings.PressRotationAngle = Math.Clamp(_settings.PressRotationAngle, 30, 180);
-        _settings.TransitionSpeed = Math.Clamp(_settings.TransitionSpeed, 1, 100);
+        _settings.TransitionSpeed = _settings.EffectiveTransitionSpeed;
         _settings.AdvancedActivationBehavior = _settings.AdvancedActivationBehavior == "Hold" ? "Hold" : "Toggle";
         _settings.SimpleDeadzoneAngle = Math.Clamp(_settings.SimpleDeadzoneAngle, 0, 45);
         _toggleActive = _settings.Enabled;
@@ -703,11 +708,66 @@ internal sealed class NeckAssistForm : Form
         bindingHelp.SetBounds(12, 94, 710, 32); bindings.Controls.Add(bindingHelp);
         Label speedLabel = MakeLabel(T("Neck.TransitionSpeed"), 10, FontStyle.Bold); speedLabel.ForeColor = ThemePalette.FromArgb(70, 220, 240); speedLabel.SetBounds(790, 2, 360, 28);
         Label speedValue = MakeLabel(_settings.TransitionSpeed + "%", 10, FontStyle.Bold); speedValue.TextAlign = ContentAlignment.MiddleRight; speedValue.ForeColor = ThemePalette.FromArgb(70, 220, 240); speedValue.SetBounds(1450, 2, 90, 28);
-        AccentTrackBar transitionSpeed = new() { Minimum = 1, Maximum = 100, Value = _settings.TransitionSpeed, TickFrequency = 10, Accent = ThemePalette.FromArgb(70, 220, 240) };
+        AccentTrackBar transitionSpeed = new() { Name = "TransitionSpeedSlider", Minimum = 1, Maximum = _settings.MaximumTransitionSpeed, Value = _settings.TransitionSpeed, TickFrequency = 10, Accent = ThemePalette.FromArgb(70, 220, 240) };
         transitionSpeed.SetBounds(790, 32, 750, 46);
         Label speedHelp = MakeLabel(T("Neck.TransitionHelp"), 10.5f, FontStyle.Regular); speedHelp.SetBounds(790, 82, 760, 32);
-        transitionSpeed.ValueChanged += (_, _) => { _settings.TransitionSpeed = transitionSpeed.Value; speedValue.Text = transitionSpeed.Value + "%"; SaveSettings(); };
-        bindings.Controls.AddRange(new Control[] { speedLabel, speedValue, transitionSpeed, speedHelp });
+        ThemeCheckBox unlockSpeed = new() { Name = "UnlockTransitionSpeed", AutoSize = false, Checked = _settings.UnlockTransitionSpeed, ForeColor = speedLabel.ForeColor, BackColor = Color.Transparent };
+        NumericUpDown speedInput = new() { Name = "TransitionSpeedInput", Minimum = 1, Maximum = 300, Value = _settings.TransitionSpeed, DecimalPlaces = 0, Font = speedLabel.Font, BackColor = ThemePalette.FromArgb(16, 29, 33), ForeColor = speedLabel.ForeColor, TextAlign = HorizontalAlignment.Right };
+        UiLanguage.Bind(unlockSpeed, "Neck.UnlockTransitionSpeed", _languageCode);
+        UiLanguage.BindToolTip(help, unlockSpeed, "Neck.Tooltip.UnlockTransitionSpeed", _languageCode);
+        UiLanguage.BindToolTip(help, speedInput, "Neck.Tooltip.TransitionSpeedInput", _languageCode);
+        bool syncingSpeed = false;
+        void SyncTransitionSpeedUi()
+        {
+            syncingSpeed = true;
+            try
+            {
+                bool simple = _settings.MovementMode == "Simple";
+                unlockSpeed.Checked = _settings.UnlockTransitionSpeed;
+                unlockSpeed.Visible = simple;
+                speedInput.Visible = !simple;
+                transitionSpeed.Maximum = simple ? _settings.MaximumTransitionSpeed : 300;
+                transitionSpeed.Value = _settings.EffectiveTransitionSpeed;
+                speedInput.Value = _settings.EffectiveTransitionSpeed;
+                speedValue.Text = simple ? _settings.TransitionSpeed + "%" : "%";
+            }
+            finally { syncingSpeed = false; }
+        }
+        void SetTransitionSpeed(int value)
+        {
+            if (syncingSpeed) return;
+            if (value > 100) _settings.UnlockTransitionSpeed = true;
+            _settings.TransitionSpeed = value;
+            SyncTransitionSpeedUi();
+            SaveSettings();
+        }
+        void LayoutTransitionSpeedControls()
+        {
+            if (_settings.MovementMode == "Simple")
+            {
+                int height = unlockSpeed.GetPreferredSize(new Size(speedHelp.Width, 0)).Height + 8;
+                unlockSpeed.SetBounds(speedHelp.Left, speedHelp.Bottom + 4, speedHelp.Width, Math.Max(38, height));
+            }
+            else
+            {
+                int right = speedValue.Right;
+                speedValue.SetBounds(right - 22, speedValue.Top, 22, speedValue.Height);
+                int inputY = Math.Max(0, Math.Min(speedValue.Top, transitionSpeed.Top - speedInput.PreferredHeight - 4));
+                speedInput.SetBounds(right - 124, inputY, 98, speedInput.PreferredHeight);
+                speedLabel.Width = Math.Max(100, speedInput.Left - speedLabel.Left - 12);
+            }
+        }
+        transitionSpeed.ValueChanged += (_, _) => SetTransitionSpeed(transitionSpeed.Value);
+        speedInput.ValueChanged += (_, _) => SetTransitionSpeed((int)speedInput.Value);
+        unlockSpeed.CheckedChanged += (_, _) =>
+        {
+            if (syncingSpeed) return;
+            _settings.UnlockTransitionSpeed = unlockSpeed.Checked;
+            _settings.TransitionSpeed = _settings.EffectiveTransitionSpeed;
+            SyncTransitionSpeedUi();
+            SaveSettings();
+        };
+        bindings.Controls.AddRange(new Control[] { speedLabel, speedValue, transitionSpeed, speedHelp, unlockSpeed, speedInput });
         UiLanguage.BindToolTip(help, _recenterBind, "Neck.Tooltip.Recenter", _languageCode);
         UiLanguage.BindToolTip(help, _activationBind, "Neck.Tooltip.Toggle", _languageCode);
         UiLanguage.BindToolTip(help, advancedBehavior, "Neck.Tooltip.AdvancedBehavior", _languageCode);
@@ -790,6 +850,8 @@ internal sealed class NeckAssistForm : Form
         SetRearControls();
         ThemeRadioButton normalMode = new() { Text = T("Assistant.Advanced"), Appearance = Appearance.Button, Checked = _settings.MovementMode == "Advanced", AutoSize = false, ForeColor = Color.White, TextAlign = ContentAlignment.MiddleCenter, BackColor = ThemePalette.FromArgb(35, 55, 60) };
         ThemeRadioButton pressMode = new() { Text = T("Assistant.Simple"), Appearance = Appearance.Button, Checked = _settings.MovementMode == "Simple", AutoSize = false, ForeColor = Color.White, TextAlign = ContentAlignment.MiddleCenter, BackColor = ThemePalette.FromArgb(35, 55, 60) };
+        normalMode.Name = "AdvancedMovementMode";
+        pressMode.Name = "SimpleMovementMode";
         // Keep all three controls inside the 1625px design canvas, even at the normal minimum window width.
         pressMode.SetBounds(1125, 0, 125, 38);
         normalMode.SetBounds(1260, 0, 125, 38);
@@ -813,6 +875,7 @@ internal sealed class NeckAssistForm : Form
         {
             bool press = pressMode.Checked;
             _settings.MovementMode = press ? "Simple" : "Advanced";
+            SyncTransitionSpeedUi();
             // Simple mode does not need the graph-sized overview. Give that space to
             // its controls and binding help so nothing is pushed below the window.
             dashboard.RowStyles[0].SizeType = press ? SizeType.Absolute : SizeType.Percent;
@@ -836,8 +899,8 @@ internal sealed class NeckAssistForm : Form
                 clearSimple.SetBounds(440, 4, 90, 38);
                 bindingHelp.SetBounds(12, 48, Math.Max(450, bindings.ClientSize.Width - 24), 44);
                 speedLabel.SetBounds(12, 86, 245, 54);
-                speedValue.SetBounds(Math.Max(510, bindings.ClientSize.Width - 76), 86, 64, 30);
-                transitionSpeed.SetBounds(265, 86, Math.Max(230, bindings.ClientSize.Width - 355), 34);
+                speedValue.SetBounds(Math.Max(510, bindings.ClientSize.Width - 102), 86, 90, 30);
+                transitionSpeed.SetBounds(265, 86, Math.Max(230, bindings.ClientSize.Width - 387), 34);
                 speedHelp.SetBounds(12, 144, Math.Max(450, bindings.ClientSize.Width - 24), 48);
             }
             else
@@ -849,6 +912,7 @@ internal sealed class NeckAssistForm : Form
                 transitionSpeed.SetBounds(rightX, 36, Math.Max(180, bindings.ClientSize.Width - rightX - 20), 34);
                 speedHelp.SetBounds(rightX, 76, Math.Max(180, bindings.ClientSize.Width - rightX - 20), 48);
             }
+            LayoutTransitionSpeedControls();
             LayoutPressOverview();
             if (press) QueuePressOverviewLayout();
             normalMode.BackColor = !press ? ThemePalette.FromArgb(25, 95, 55) : ThemePalette.FromArgb(35, 55, 60);
@@ -1048,8 +1112,8 @@ internal sealed class NeckAssistForm : Form
                     if (simple)
                     {
                         speedLabel.SetBounds(12,88,245,54);
-                        speedValue.SetBounds(width-70,88,58,30);
-                        transitionSpeed.SetBounds(265,88,Math.Max(220,width-355),34);
+                        speedValue.SetBounds(width-102,88,90,30);
+                        transitionSpeed.SetBounds(265,88,Math.Max(180,width-387),34);
                         speedHelp.SetBounds(12,148,width-28,56);
                     }
                     else
@@ -1076,9 +1140,16 @@ internal sealed class NeckAssistForm : Form
                             TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix).Height + 12;
                         helpLabel.Height = Math.Max(helpLabel.Height, preferredHeight);
                     }
+                    // Long binding translations can extend below the old fixed
+                    // speed row. Keep the entire speed section below that text.
+                    int speedShift = Math.Max(0, bindingHelp.Bottom + 12 - speedLabel.Top);
+                    foreach (Control speedControl in new Control[] { speedLabel, speedValue, transitionSpeed, speedHelp })
+                        speedControl.Top += speedShift;
                     // Position the recenter row after the *measured* help text.
                     // This prevents translated/help text from being covered or cut.
-                    int recenterY = Math.Max(simple ? 216 : 304, speedHelp.Bottom + 12);
+                    LayoutTransitionSpeedControls();
+                    int speedSectionBottom = simple ? unlockSpeed.Bottom : speedHelp.Bottom;
+                    int recenterY = Math.Max(simple ? 216 : 304, speedSectionBottom + 12);
                     recenterNow.SetBounds(12, recenterY, recenterWidth, 38);
                     _recenterBind.SetBounds(recenterNow.Right + 10, recenterY, Math.Max(100, width - recenterNow.Right - 122), 38);
                     clearRecenter.SetBounds(width - 102, recenterY, 90, 38);
@@ -1099,7 +1170,7 @@ internal sealed class NeckAssistForm : Form
             {
                 foreach(Control child in parent.Controls)
                 {
-                    if(child is Label || child is ButtonBase || child is CheckBox || child is RadioButton)
+                    if(child is Label || child is ButtonBase || child is CheckBox || child is RadioButton || child is NumericUpDown)
                     {
                         float basePixels = child.Font.Bold ? 22f : 21f;
                         if (child == title) basePixels = 30f;

@@ -39,3 +39,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & ./artifacts/controls-tests/ControlsInput.Tests.exe
           exit $LASTEXITCODE
+
+      - name: Verify Neck Assistant speed and localized layouts
+        shell: pwsh
+        run: |
+          dotnet publish Tests/NeckSpeed.Tests/NeckSpeed.Tests.csproj -c Release -p:Platform=x86 -r win-x86 --self-contained true -o artifacts/neck-speed-tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./artifacts/neck-speed-tests/NeckSpeed.Tests.exe
+          exit $LASTEXITCODE

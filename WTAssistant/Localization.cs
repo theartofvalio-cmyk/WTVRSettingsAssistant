@@ -13,6 +13,7 @@ internal static partial class AppText
         AddRelease21Translations();
         AddRelease21LateTranslations();
         AddHoverKeybindTranslations();
+        AddNeckSpeedTranslations();
         AddControlsInputTranslations();
         ApplyCurrentReleaseNotes();
     }

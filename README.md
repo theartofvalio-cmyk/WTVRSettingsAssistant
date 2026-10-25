@@ -1,12 +1,12 @@
 # War Thunder VR Assistant
 
-Windows companion app for War Thunder pilots using VR, HOTAS, and rudder pedals. Version **2.0.10**.
+Windows companion app for War Thunder pilots using VR, HOTAS, and rudder pedals. Version **2.0.11**.
 
 **[Website and setup guide](https://wtvrassistant.com/)** · **[Download the latest Windows release](https://github.com/theartofvalio-cmyk/WTVRSettingsAssistant/releases/latest)**
 
 ## What it does
 
-- **Neck Assistant** adjusts VR head movement through OpenXR, VDXR, or SteamVR for more comfortable rearward viewing.
+- **Neck Assistant** adjusts VR head movement through OpenXR, VDXR, or SteamVR for more comfortable rearward viewing. Simple mode can unlock rotation speeds up to 300%; Advanced mode accepts an exact speed from 1% to 300%.
 - **KeyBind Assistant** maps keyboard, mouse, and HOTAS inputs, including up to 128 physical controller buttons, action sequences that repeat while held, physical two-position switches, Hover UP/Down controls, and a scoreboard cursor correction.
 - **VTrim Assistant** routes HOTAS axes through vJoy, provides virtual trim, and lets you edit pitch, roll, and yaw response curves.
 - **Aircraft profiles** are created as you fly using local War Thunder telemetry. The app switches to the detected aircraft's profile automatically. You can also add and customize profiles before flying them. A profile left on **Default** uses the Trim Dashboard and default axis settings; **Custom** stores aircraft-specific controls and curves.

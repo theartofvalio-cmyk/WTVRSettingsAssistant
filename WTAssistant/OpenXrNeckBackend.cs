@@ -110,14 +110,12 @@ internal sealed class OpenXrNeckBackend : IDisposable
         float targetYaw = pressMode ? (runtimeActive && _simpleDirectionLatched ? _pressDirection * settings.PressRotationAngle : 0) :
             (_yawEngaged ? settings.YawBezier.Evaluate(yaw, settings.StartAngle, settings.MaximumViewAngle, 110, settings.YawCurvature, settings.NaturalRearView, settings.YawNaturalResumeAngle) - yaw : 0);
         float targetPitch = !pressMode && _pitchEngaged ? settings.PitchBezier.Evaluate(pitch, settings.PitchStartAngle, settings.PitchMaximumViewAngle, 80, settings.PitchCurvature, settings.NaturalRearView, settings.PitchNaturalResumeAngle) - pitch : 0;
-        float transitionAmount = Math.Clamp(settings.TransitionSpeed / 100f, 0.01f, 1f);
-        float transitionTau = 0.52f - transitionAmount * 0.46f;
+        var (transitionTau, yawRateLimit, pitchRateLimit) = TransitionParameters(settings);
         // A large Simple-mode offset can otherwise peak above 400 deg/s. At a
         // 90 Hz headset that is roughly a 5-degree visual jump per frame even
         // though the mathematical curve itself is continuous. Bound angular
-        // velocity so the same transition is delivered in smaller increments.
-        float yawRateLimit = 80f + transitionAmount * 160f;
-        float pitchRateLimit = 60f + transitionAmount * 120f;
+        // velocity so the same transition is delivered in smaller increments;
+        // the optional >100% range explicitly raises this ceiling.
         _filteredYaw = Stabilize(_filteredYaw, targetYaw, ref _yawVelocity, dt, transitionTau, yawRateLimit);
         _filteredPitch = Stabilize(_filteredPitch, targetPitch, ref _pitchVelocity, dt, transitionTau, pitchRateLimit);
         if (!settings.Enabled) _filteredYaw = _filteredPitch = _yawVelocity = _pitchVelocity = 0;
@@ -135,12 +133,24 @@ internal sealed class OpenXrNeckBackend : IDisposable
         else if (engaged && absolute <= Math.Min(release, start - 2)) engaged = false;
     }
 
-    private static float Stabilize(float previous, float target, ref float velocity, float dt, float tau, float maximumVelocity)
+    internal static (float Tau, float YawRate, float PitchRate) TransitionParameters(NeckAssistSettings settings)
+    {
+        float speed = settings.EffectiveTransitionSpeed / 100f;
+        float normalAmount = Math.Min(speed, 1f);
+        float multiplier = Math.Max(speed, 1f);
+        // Preserve the original 1–100% response. Above 100%, scale both the
+        // response time and angular-rate ceiling, reaching 3x speed at 300%.
+        return (Math.Max(0.06f, 0.52f - normalAmount * 0.46f) / multiplier,
+            (80f + normalAmount * 160f) * multiplier,
+            (60f + normalAmount * 120f) * multiplier);
+    }
+
+    internal static float Stabilize(float previous, float target, ref float velocity, float dt, float tau, float maximumVelocity)
     {
         // Exact critically damped response, followed by a physical angular-rate
         // ceiling. The ceiling prevents large 150-180 degree Simple transitions
         // from becoming visible multi-degree steps at normal VR refresh rates.
-        float omega = 2f / Math.Max(0.06f, tau);
+        float omega = 2f / Math.Max(0.02f, tau);
         float error = previous - target;
         float combined = velocity + omega * error;
         float decay = MathF.Exp(-omega * dt);
