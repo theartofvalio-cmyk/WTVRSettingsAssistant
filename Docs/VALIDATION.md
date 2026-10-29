@@ -1,8 +1,8 @@
-# Validation for War Thunder VR Assistant v2.0.12
+# Validation for War Thunder VR Assistant v2.0.13
 
 On Windows with the .NET 10 SDK, run `Run-Tests.cmd` for the layout audit and managed GameServices, aircraft data, and VTrim tests. Run `dotnet run --project WTAssistant/verification/ThemePreview/ThemePreview.csproj -c Release -p:Platform=x86 -- --startup-smoke` to check Windows startup, WebView2 deferral, repeated tray restore, and saved window size.
 
-Run `Build.cmd` for the self-contained x86 publish and packaged executable self-test. The release ZIP must contain the executable, native DLLs, Drivers, and Licenses at its root, with no personal Settings folder. Confirm file version 2.0.12.0, product version 2.0.12, and a passing `--self-test` report.
+Run `Build.cmd` for the self-contained x86 publish and packaged executable self-test. The release ZIP must contain the executable, native DLLs, Drivers, and Licenses at its root, with no personal Settings folder. Confirm file version 2.0.13.0, product version 2.0.13, and a passing `--self-test` report.
 
 The automated tests simulate input and game state. Physical HOTAS, vJoy, VR runtime, and War Thunder behavior still require a real-device acceptance test.
 
@@ -26,3 +26,11 @@ Local v2.0.12 verification (29 October 2026):
 - `VTrim.Core.Tests` passed 62 checks; `NeckSpeed.Tests` passed 4,863 checks; the layout audit passed 412 checks; `GameServices.Tests` passed 41 checks; `AircraftData.Tests` passed.
 - No physical HOTAS is connected to this machine. In-game axis latency and feel require a physical controller acceptance test.
 - The v2.0.12 release ZIP contains exactly seven required runtime, driver, and license files, with no settings or profiles. SHA-256: `1354eb1e73918c794dfde87a4f5d093b04b2a2714e259a982d90fa422558f6ce`.
+
+Local v2.0.13 verification (29 October 2026):
+
+- `Build.cmd` produced the self-contained x86 app with file version 2.0.13.0 and product version 2.0.13. Its packaged self-test passed with zero failures and zero warnings, including a simulated 180 ms UI stall during continued flight-axis output.
+- `VTrim.Core.Tests` passed 62 checks; `ControlsInput.Tests` passed 227 checks; `NeckSpeed.Tests` passed 4,863 checks; the layout audit passed 412 checks; `GameServices.Tests` passed 41 checks; `AircraftData.Tests` passed.
+- The release ZIP contains exactly seven runtime, driver, and license files, with no settings or profiles. SHA-256: `2f3dda858d50fdf8add94f902451d2133aef3768c56643c962d82752780ea1e0`.
+- Physical HOTAS and War Thunder gameplay were unavailable for local acceptance testing.
+- The optional Home-page startup smoke check failed because its WebView2 field was still null immediately after tray restore; the VTrim and packaged app checks above passed. The Home-page path was not changed in this release.

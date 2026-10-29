@@ -138,7 +138,7 @@ public partial class Form1
             if (axis == AxisTarget.Roll) _rollResponse = new();
             else if (axis == AxisTarget.Pitch) _pitchResponse = new();
             else _rudderResponse = new();
-            _storeTrimReturn.Cancel(); ResetAutomaticInstructorHold();
+            _storeTrimReturn.Cancel(); _flightAxisWorker?.CancelStore(); ResetAutomaticInstructorHold();
             RefreshCurveEditors(); SaveBindings();
         };
         controls.Controls.Add(reset, 0, 4); controls.SetColumnSpan(reset, 2);

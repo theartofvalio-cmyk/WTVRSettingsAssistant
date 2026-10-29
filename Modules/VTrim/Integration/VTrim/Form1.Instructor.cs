@@ -105,7 +105,7 @@ public partial class Form1
         if (!_instructorModeEnabled) _instructorState = "OFF";
         // Clear the last submitted correction immediately on disable/reset,
         // even if the next input poll has not yet run.
-        if (_vJoyConnected && !_offlinePreview)
+        if (_vJoyConnected && !_offlinePreview && _flightAxisWorker is null)
         {
             AxisVector manual = MonotonicSeconds - _lastAxisSnapshotTime <= .25 ? _currentManualCommand : default;
             try { _vJoy?.SendFlightAxes(manual.Roll, manual.Pitch, manual.Rudder); }

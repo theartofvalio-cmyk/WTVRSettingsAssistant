@@ -120,49 +120,46 @@ internal sealed class AxisResponse
         if (!HasCustomCurve) return ParametricShape(x, Math.Clamp(Curve / 100.0, -1, 1));
 
         int n = CustomPoints.Count + 2;
-        double[] xs = new double[n];
-        double[] ys = new double[n];
-        xs[0] = 0; ys[0] = 0;
-        for (int i = 0; i < CustomPoints.Count; i++)
+        (double X, double Y) Point(int index)
         {
-            xs[i + 1] = CustomPoints[i].X;
-            ys[i + 1] = CustomPoints[i].Y;
+            if (index == 0) return (0, 0);
+            if (index == n - 1) return (1, 1);
+            AxisCurvePoint point = CustomPoints[index - 1];
+            return (point.X, point.Y);
         }
-        xs[^1] = 1; ys[^1] = 1;
-
-        int segment = 0;
-        while (segment < n - 2 && x > xs[segment + 1]) segment++;
-        double h = Math.Max(0.000001, xs[segment + 1] - xs[segment]);
-        double t = Math.Clamp((x - xs[segment]) / h, 0, 1);
-
-        double[] slopes = new double[n - 1];
-        for (int i = 0; i < slopes.Length; i++)
-            slopes[i] = (ys[i + 1] - ys[i]) / Math.Max(0.000001, xs[i + 1] - xs[i]);
-
-        double[] tangent = new double[n];
-        tangent[0] = slopes[0];
-        tangent[^1] = slopes[^1];
-        for (int i = 1; i < n - 1; i++)
+        double Slope(int index)
         {
-            if (slopes[i - 1] <= 0 || slopes[i] <= 0)
-            {
-                tangent[i] = 0;
-                continue;
-            }
-            double hPrev = xs[i] - xs[i - 1];
-            double hNext = xs[i + 1] - xs[i];
+            var a = Point(index);
+            var b = Point(index + 1);
+            return (b.Y - a.Y) / Math.Max(0.000001, b.X - a.X);
+        }
+        double Tangent(int index)
+        {
+            if (index == 0) return Slope(0);
+            if (index == n - 1) return Slope(n - 2);
+            double before = Slope(index - 1), after = Slope(index);
+            if (before <= 0 || after <= 0) return 0;
+            double hPrev = Point(index).X - Point(index - 1).X;
+            double hNext = Point(index + 1).X - Point(index).X;
             double w1 = 2 * hNext + hPrev;
             double w2 = hNext + 2 * hPrev;
-            tangent[i] = (w1 + w2) / (w1 / slopes[i - 1] + w2 / slopes[i]);
+            return (w1 + w2) / (w1 / before + w2 / after);
         }
+
+        int segment = 0;
+        while (segment < n - 2 && x > Point(segment + 1).X) segment++;
+        var start = Point(segment);
+        var end = Point(segment + 1);
+        double h = Math.Max(0.000001, end.X - start.X);
+        double t = Math.Clamp((x - start.X) / h, 0, 1);
 
         double t2 = t * t, t3 = t2 * t;
         double h00 = 2 * t3 - 3 * t2 + 1;
         double h10 = t3 - 2 * t2 + t;
         double h01 = -2 * t3 + 3 * t2;
         double h11 = t3 - t2;
-        double value = h00 * ys[segment] + h10 * h * tangent[segment] +
-                       h01 * ys[segment + 1] + h11 * h * tangent[segment + 1];
+        double value = h00 * start.Y + h10 * h * Tangent(segment) +
+                       h01 * end.Y + h11 * h * Tangent(segment + 1);
         return Math.Clamp(value, 0, 1);
     }
 }

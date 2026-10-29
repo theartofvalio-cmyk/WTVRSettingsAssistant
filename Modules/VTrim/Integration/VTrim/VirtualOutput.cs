@@ -84,10 +84,27 @@ public static class SharedVJoyOutputCoordinator
         lock (Gate)
         {
             EnsureConnected();
-            _joystick!.SetJoystickAxis(Map(roll), Axis.HID_USAGE_X);
-            _joystick.SetJoystickAxis(Map(pitch), Axis.HID_USAGE_Y);
-            _joystick.SetJoystickAxis(Map(rudder), Axis.HID_USAGE_RZ);
+            SendFlightAxesCore(roll, pitch, rudder);
         }
+    }
+
+    // The flight worker must never reacquire vJoy after VTrim disconnects.
+    // Button mappings may still own the same virtual device.
+    public static bool TrySendFlightAxesForAxisClient(double roll, double pitch, double rudder)
+    {
+        lock (Gate)
+        {
+            if (_axisClients == 0 || _joystick is null) return false;
+            SendFlightAxesCore(roll, pitch, rudder);
+            return true;
+        }
+    }
+
+    private static void SendFlightAxesCore(double roll, double pitch, double rudder)
+    {
+        _joystick!.SetJoystickAxis(Map(roll), Axis.HID_USAGE_X);
+        _joystick.SetJoystickAxis(Map(pitch), Axis.HID_USAGE_Y);
+        _joystick.SetJoystickAxis(Map(rudder), Axis.HID_USAGE_RZ);
     }
 
     public static void ButtonDown(int id)

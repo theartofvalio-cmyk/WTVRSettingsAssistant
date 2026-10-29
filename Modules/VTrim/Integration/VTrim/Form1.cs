@@ -549,6 +549,7 @@ public partial class Form1 : Form
         Shown += (_, _) =>
         {
             RefreshDevices();
+            StartFlightAxisWorker();
             _pollTimer.Start();
             _warThunderTelemetryTimer.Start();
             StartAutomaticVJoyConnection();
@@ -5018,6 +5019,9 @@ public partial class Form1 : Form
     {
         ResetAutomaticInstructorHold();
         _pollTimer.Stop();
+        _flightAxisWorker?.Configure(null);
+        _flightAxisWorker?.SetOutputActive(false);
+        _publishedFlightConfiguration = null;
 
         Guid? previousSelection = _selectedDeviceGuid;
 
@@ -5188,6 +5192,8 @@ public partial class Form1 : Form
         }
         finally
         {
+            PublishFlightConfiguration();
+            _flightAxisWorker?.SetOutputActive(_vJoyConnected);
             _pollTimer.Start();
         }
     }
@@ -5262,6 +5268,9 @@ public partial class Form1 : Form
             ProcessTrimBindings(currentStates);
         }
 
+        PublishFlightConfiguration();
+        if (_flightAxisWorker?.TakeOutputError() is string outputError && _vJoyConnected)
+            HandleVJoyConnectionLost(VF("VJoy.OutputFailed", outputError));
         ProcessLiveAxes(currentStates);
 
         foreach ((Guid guid, DirectInputState state) in currentStates)
@@ -5366,6 +5375,19 @@ public partial class Form1 : Form
     private void UpdatePhysicalAxisSnapshot(
         IReadOnlyDictionary<Guid, DirectInputState> currentStates)
     {
+        FlightSample? flight = _flightAxisWorker?.Latest;
+        if (flight is not null && Environment.TickCount64 - flight.ReadAt <= 250)
+        {
+            _rollInputAvailable = flight.RollAvailable;
+            _pitchInputAvailable = flight.PitchAvailable;
+            _rudderInputAvailable = flight.RudderAvailable;
+            _lastPhysicalRoll = flight.Physical.Roll;
+            _lastPhysicalPitch = flight.Physical.Pitch;
+            _lastPhysicalRudder = flight.Physical.Rudder;
+            _lastAxisSnapshotTime = MonotonicSeconds;
+            _currentManualCommand = ComposeManualCommand();
+            return;
+        }
         bool Available(AxisSource? source) => source is not null &&
             currentStates.TryGetValue(source.DeviceGuid, out var state) &&
             TryReadAxisRaw(state, source.AxisKey, out _);
@@ -5410,9 +5432,16 @@ public partial class Form1 : Form
         ApplyAutomaticInstructorMode(_lastPhysicalRoll, _lastPhysicalPitch, _lastPhysicalRudder,
             _rollInputAvailable, _pitchInputAvailable, _rudderInputAvailable,
             ref outputRoll, ref outputPitch, ref outputRudder);
-        // Submit flight axes before updating the dashboard. Painting is handled
-        // by the message loop and must not add latency to the current sample.
-        if (_vJoyConnected)
+        FlightSample? flight = _flightAxisWorker?.Latest;
+        if (flight is not null && Environment.TickCount64 - flight.ReadAt <= 250)
+        {
+            outputRoll = flight.Output.Roll;
+            outputPitch = flight.Output.Pitch;
+            outputRudder = flight.Output.Rudder;
+        }
+        // The standalone offline preview and future unlocked Flight Assistant
+        // continue to use the UI path; production manual axes use the worker.
+        if (_vJoyConnected && _flightAxisWorker is null)
         {
             try
             {
@@ -5423,9 +5452,11 @@ public partial class Form1 : Form
                 HandleVJoyConnectionLost(VF("VJoy.OutputFailed", exception.Message));
             }
         }
-        // The graphs and labels do not need the 15 ms flight update cadence.
-        // Rate-limit their invalidations so they cannot starve input polling.
+        // Keep the live markers at the UI polling cadence. Text and curve
+        // panels can refresh more slowly without making motion look stepped.
         double now = MonotonicSeconds;
+        UpdateTrimDisplay(_lastPhysicalRoll, _lastPhysicalPitch, _lastPhysicalRudder,
+            outputRoll, outputPitch, outputRudder, updateMeters: false);
         if (now - _lastFlightDisplayAt >= 0.05)
         {
             _lastFlightDisplayAt = now;
@@ -5433,7 +5464,7 @@ public partial class Form1 : Form
             UpdateCurvePreview(AxisTarget.Pitch, _lastPhysicalPitch);
             UpdateCurvePreview(AxisTarget.Rudder, _lastPhysicalRudder);
             UpdateTrimDisplay(_lastPhysicalRoll, _lastPhysicalPitch, _lastPhysicalRudder,
-                outputRoll, outputPitch, outputRudder);
+                outputRoll, outputPitch, outputRudder, updatePreview: false);
         }
     }
 
@@ -5538,6 +5569,7 @@ public partial class Form1 : Form
             _vJoy.Connect();
 
             _vJoyConnected = true;
+            _flightAxisWorker?.SetOutputActive(true);
             _vJoyStatusLabel.Text = VT("VJoy.Connected");
 
             _vJoyStatusLabel.ForeColor = Theme.Success;
@@ -5624,6 +5656,7 @@ public partial class Form1 : Form
     private void HandleVJoyConnectionLost(
         string message)
     {
+        _flightAxisWorker?.SetOutputActive(false);
         _instructorController.Invalidate();
         _lastPitchHold = default;
         DisposeVJoyInstance();
@@ -5648,6 +5681,7 @@ public partial class Form1 : Form
 
     private void DisconnectVJoy()
     {
+        _flightAxisWorker?.SetOutputActive(false);
         ResetAutomaticInstructorHold();
         DisposeVJoyInstance();
         _vJoyConnected = false;
@@ -6591,6 +6625,11 @@ public partial class Form1 : Form
             new(Math.Max(0.002, _rollResponse.Deadzone / 100),
                 Math.Max(0.002, _pitchResponse.Deadzone / 100),
                 Math.Max(0.002, _rudderResponse.Deadzone / 100)));
+        PublishFlightConfiguration();
+        _flightAxisWorker?.BeginStore(new(_lastPhysicalRoll, _lastPhysicalPitch, _lastPhysicalRudder),
+            new(Math.Max(0.002, _rollResponse.Deadzone / 100),
+                Math.Max(0.002, _pitchResponse.Deadzone / 100),
+                Math.Max(0.002, _rudderResponse.Deadzone / 100)));
         ResetAutomaticInstructorHold();
         SetInstruction(capture.Limited
             ? VT("Trim.StoredAtLimit")
@@ -6644,6 +6683,7 @@ public partial class Form1 : Form
                 _automaticRudderRollCompensation = 0.0;
                 _automaticRudderPitchCompensation = 0.0;
                 _storeTrimReturn.Cancel();
+                _flightAxisWorker?.CancelStore();
                 ResetAutomaticInstructorHold();
                 UpdateInstructorModeUi();
                 SetInstruction(
@@ -6679,8 +6719,12 @@ public partial class Form1 : Form
         double physicalRudder,
         double outputRoll,
         double outputPitch,
-        double outputRudder)
+        double outputRudder,
+        bool updateMeters = true,
+        bool updatePreview = true)
     {
+        if (updateMeters)
+        {
         _pitchValueLabel.Text = string.Format(CultureInfo.CurrentCulture, VT("Trim.PitchValue"), Math.Clamp(_pitchTrim + _automaticRudderPitchCompensation, -95, 95));
 
         _rollValueLabel.Text = string.Format(CultureInfo.CurrentCulture, VT("Trim.RollValue"), Math.Clamp(_rollTrim + _automaticRudderRollCompensation, -95, 95));
@@ -6702,7 +6746,9 @@ public partial class Form1 : Form
                 -95.0,
                 95.0);
         _rudderBar.Value = _rudderTrim;
+        }
 
+        if (!updatePreview) return;
         _stickPreview.SetValues(
             physicalRoll,
             physicalPitch,
@@ -7322,6 +7368,7 @@ public partial class Form1 : Form
 
             ResetAutomaticInstructorHold();
             _storeTrimReturn.Cancel();
+            _flightAxisWorker?.CancelStore();
             _currentManualCommand = default;
             _lastAxisSnapshotTime = double.NegativeInfinity;
             _horizontalRudderCalibrationArmed = false;
@@ -8109,6 +8156,7 @@ public partial class Form1 : Form
         _instructorController.Invalidate();
         _telemetryShutdown.Cancel();
         _pollTimer.Stop();
+        StopFlightAxisWorker();
         _vJoyAutoConnectTimer.Stop();
         _warThunderTelemetryTimer.Stop();
         SaveBindings();
@@ -8128,6 +8176,7 @@ public partial class Form1 : Form
         }
 
         _storeTrimReturn.Cancel();
+        _flightAxisWorker?.CancelStore();
         _lastAxisSnapshotTime = double.NegativeInfinity;
         _devices.Clear();
         _capturedCombinationTriggers.Clear();
