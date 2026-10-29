@@ -1,8 +1,8 @@
-# Validation for War Thunder VR Assistant v2.0.11
+# Validation for War Thunder VR Assistant v2.0.12
 
 On Windows with the .NET 10 SDK, run `Run-Tests.cmd` for the layout audit and managed GameServices, aircraft data, and VTrim tests. Run `dotnet run --project WTAssistant/verification/ThemePreview/ThemePreview.csproj -c Release -p:Platform=x86 -- --startup-smoke` to check Windows startup, WebView2 deferral, repeated tray restore, and saved window size.
 
-Run `Build.cmd` for the self-contained x86 publish and packaged executable self-test. The release ZIP must contain the executable, native DLLs, Drivers, and Licenses at its root, with no personal Settings folder. Confirm file version 2.0.11.0, product version 2.0.11, and a passing `--self-test` report.
+Run `Build.cmd` for the self-contained x86 publish and packaged executable self-test. The release ZIP must contain the executable, native DLLs, Drivers, and Licenses at its root, with no personal Settings folder. Confirm file version 2.0.12.0, product version 2.0.12, and a passing `--self-test` report.
 
 The automated tests simulate input and game state. Physical HOTAS, vJoy, VR runtime, and War Thunder behavior still require a real-device acceptance test.
 
@@ -18,3 +18,11 @@ Local v2.0.11 verification (25 October 2026):
 - The release ZIP contains exactly the seven required runtime/driver/license files, with no settings, profiles or diagnostics. SHA-256: `cd38ddaad93e9f344ab52c99f1738834fa255c50d474bfa72752cbaea7d31b77`.
 
 For VR acceptance, compare 100%, 200% and 300% during activation and release; confirm that turning off the Simple unlock immediately caps speed at 100%. Actual headset feel has not been verified in the automated checks.
+
+Local v2.0.12 verification (29 October 2026):
+
+- The packaged x86 executable passed its built-in self-test with zero failures and zero warnings.
+- `Tests/ControlsInput.Tests` passed 227 checks, including a regression check that two switch mappings sharing one HOTAS use one controller sample per cycle; the mocked 100 ms repeat interval averaged 101.0 ms.
+- `VTrim.Core.Tests` passed 62 checks; `NeckSpeed.Tests` passed 4,863 checks; the layout audit passed 412 checks; `GameServices.Tests` passed 41 checks; `AircraftData.Tests` passed.
+- No physical HOTAS is connected to this machine. In-game axis latency and feel require a physical controller acceptance test.
+- The v2.0.12 release ZIP contains exactly seven required runtime, driver, and license files, with no settings or profiles. SHA-256: `1354eb1e73918c794dfde87a4f5d093b04b2a2714e259a982d90fa422558f6ce`.

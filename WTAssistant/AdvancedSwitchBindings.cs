@@ -361,10 +361,14 @@ internal sealed partial class AdvancedSwitchService : IDisposable
     public void Poll()
     {
         if (_disposed || !Settings.Enabled) return;
+        // Several switch mappings can share one HOTAS. Read that device only
+        // once per cycle so each mapping sees the same state and VTrim's UI
+        // thread is not held up by repeated DirectInput calls.
+        var deviceStates = new Dictionary<(int Id, string Name, Guid Guid), PhysicalJoystick?>();
         foreach (SwitchDefinition definition in Settings.Switches)
         {
             if (!definition.Enabled) { ReleaseHeldFor(definition); continue; }
-            PhysicalJoystick? device = ResolveDevice(definition);
+            PhysicalJoystick? device = ResolveDevice(definition, deviceStates);
             if (device is null)
             {
                 ReleaseHeldFor(definition);
@@ -444,11 +448,22 @@ internal sealed partial class AdvancedSwitchService : IDisposable
         SetStatus(string.Format(CultureInfo.CurrentCulture, AppText.T(LanguageCode, "Switch.TestOutputStatus"), button, Settings.PulseDurationMs));
     }
 
-    private PhysicalJoystick? ResolveDevice(SwitchDefinition definition)
+    private PhysicalJoystick? ResolveDevice(
+        SwitchDefinition definition,
+        Dictionary<(int Id, string Name, Guid Guid), PhysicalJoystick?>? deviceStates = null)
     {
-        if (_reader is not null) return _reader(definition);
-        PhysicalJoystick? device = ControlsJoystickReader.Read(definition.DeviceId, definition.DeviceName, definition.DeviceGuid);
+        var key = (definition.DeviceId, definition.DeviceName, definition.DeviceGuid);
+        if (deviceStates is not null && deviceStates.TryGetValue(key, out PhysicalJoystick? cached)) return cached;
+        PhysicalJoystick? device = _reader is not null
+            ? _reader(definition)
+            : ControlsJoystickReader.Read(definition.DeviceId, definition.DeviceName, definition.DeviceGuid);
+        if (_reader is not null)
+        {
+            deviceStates?.Add(key, device);
+            return device;
+        }
         if (device is null || !string.Equals(device.Name, definition.DeviceName, StringComparison.OrdinalIgnoreCase)) return null;
+        deviceStates?.Add(key, device);
         if (definition.DeviceGuid != device.InstanceGuid || definition.DeviceId != device.Id)
         {
             definition.DeviceGuid = device.InstanceGuid;

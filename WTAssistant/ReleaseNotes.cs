@@ -2,28 +2,29 @@ namespace WTVRSettingsAssistant;
 
 internal static class ReleaseNotes
 {
-    public const string Version = "2.0.11";
+    public const string Version = "2.0.12";
     public const string Features =
-        "• Simple mode: enable ‘Unlock rotation speed up to 300%’ to extend the camera speed slider.\n\n" +
-        "• Advanced mode: enter a camera rotation speed from 1% to 300% directly in the speed field.\n\n" +
-        "• Speeds above 100% now increase the actual rotation rate and response. Your selected speed is saved; turning off the Simple unlock caps it at 100%.";
+        "• Improved VTrim HOTAS response: flight axes now reach vJoy before dashboard updates. " +
+        "Controller reads shared by multiple switch bindings are performed once per cycle. " +
+        "Neck Assistant no longer clones settings or refreshes hidden graphs on every input tick.";
 
     private static readonly IReadOnlyDictionary<string, string> Translations = new Dictionary<string, string>
     {
-        ["bg"] = "• В Simple режим можеш да отключиш скорост на завъртане до 300%. В Advanced режим въведи стойност от 1% до 300% директно в полето.\n\n• Скоростите над 100% увеличават реалната скорост и реакция на камерата. Настройката се запазва; изключването на отключването в Simple ограничава скоростта до 100%.",
-        ["es"] = "• El modo Simple permite desbloquear la velocidad de giro hasta el 300%. En Avanzado, introduce del 1% al 300% directamente.\n\n• Los valores superiores al 100% aumentan la velocidad y respuesta reales. La velocidad se guarda; desactivar el desbloqueo en Simple la limita al 100%.",
-        ["de"] = "• Im einfachen Modus lässt sich die Drehgeschwindigkeit bis 300% freigeben. Im erweiterten Modus kann ein Wert von 1% bis 300% direkt eingegeben werden.\n\n• Über 100% steigen tatsächliche Drehgeschwindigkeit und Reaktion. Der Wert wird gespeichert; das Ausschalten der Freigabe begrenzt ihn auf 100%.",
-        ["fr"] = "• En mode Simple, débloquez la vitesse de rotation jusqu’à 300%. En mode Avancé, saisissez directement une valeur de 1% à 300%.\n\n• Au-delà de 100%, la vitesse et la réactivité réelles augmentent. Le réglage est enregistré ; désactiver le déblocage en mode Simple le limite à 100%.",
-        ["pt"] = "• No modo Simples, desbloqueia a velocidade de rotação até 300%. No modo Avançado, introduz diretamente um valor de 1% a 300%.\n\n• Acima de 100%, a velocidade e a resposta reais aumentam. O valor é guardado; desativar o desbloqueio no modo Simples limita-o a 100%.",
-        ["pl"] = "• W trybie prostym można odblokować prędkość obrotu do 300%. W trybie zaawansowanym wpisz wartość od 1% do 300%.\n\n• Powyżej 100% rośnie rzeczywista prędkość i szybkość reakcji. Ustawienie jest zapisywane; wyłączenie odblokowania ogranicza je do 100%.",
-        ["ru"] = "• В простом режиме можно разрешить скорость поворота до 300%. В расширенном режиме введите значение от 1% до 300%.\n\n• Выше 100% увеличиваются реальная скорость поворота и отклик. Настройка сохраняется; отключение разрешения в простом режиме ограничивает скорость до 100%.",
-        ["uk"] = "• У простому режимі можна дозволити швидкість повороту до 300%. У розширеному режимі введіть значення від 1% до 300%.\n\n• Понад 100% зростають реальна швидкість повороту та відгук. Налаштування зберігається; вимкнення дозволу в простому режимі обмежує швидкість до 100%.",
-        ["tr"] = "• Basit modda dönüş hızını %300’e kadar açabilirsiniz. Gelişmiş modda %1 ile %300 arasında bir değer girin.\n\n• %100 üzerinde gerçek dönüş hızı ve tepki artar. Ayar kaydedilir; Basit moddaki kilidi kapatmak hızı %100 ile sınırlar.",
-        ["el"] = "• Στην απλή λειτουργία ξεκλειδώστε ταχύτητα περιστροφής έως 300%. Στη σύνθετη λειτουργία εισαγάγετε τιμή από 1% έως 300%.\n\n• Πάνω από 100% αυξάνονται η πραγματική ταχύτητα και η απόκριση. Η ρύθμιση αποθηκεύεται· η απενεργοποίηση του ξεκλειδώματος την περιορίζει στο 100%.",
-        ["ro"] = "• În modul Simplu poți debloca viteza de rotație până la 300%. În modul Avansat introdu direct o valoare între 1% și 300%.\n\n• Peste 100% cresc viteza și răspunsul reale. Setarea se salvează; dezactivarea deblocării în modul Simplu limitează viteza la 100%.",
-        ["he"] = "• במצב פשוט ניתן לאפשר מהירות סיבוב עד 300%. במצב מתקדם הזן ערך בין 1% ל־300%.\n\n• מעל 100% מהירות הסיבוב והתגובה בפועל גדלות. ההגדרה נשמרת; כיבוי האפשרות במצב פשוט מגביל את המהירות ל־100%.",
-        ["zh-Hans"] = "• 简单模式可解锁最高300%的旋转速度。高级模式可直接输入1%到300%的速度。\n\n• 超过100%时会提高实际旋转速度和响应。设置会保存；在简单模式关闭解锁会将速度限制为100%。"
+        ["bg"] = "• Подобрен е откликът на HOTAS във VTrim: осите се изпращат към vJoy преди обновяването на екрана. Няколко настройки за превключватели споделят едно прочитане на контролера за цикъл. Neck Assistant вече не копира настройките и не обновява скрити графики при всеки входен цикъл.",
+        ["es"] = "• Mejor respuesta del HOTAS en VTrim: los ejes llegan a vJoy antes de actualizar la pantalla. Varias asignaciones de interruptores comparten una lectura del mando por ciclo. Neck Assistant ya no copia los ajustes ni actualiza gráficos ocultos en cada ciclo de entrada.",
+        ["de"] = "• Verbesserte HOTAS-Reaktion in VTrim: Die Achsen erreichen vJoy vor der Anzeigeaktualisierung. Mehrere Schalterbelegungen nutzen eine gemeinsame Controller-Abfrage pro Zyklus. Neck Assistant kopiert Einstellungen und aktualisiert ausgeblendete Grafiken nicht mehr bei jedem Eingabetakt.",
+        ["fr"] = "• Réponse HOTAS améliorée dans VTrim : les axes sont envoyés à vJoy avant l’actualisation de l’affichage. Plusieurs affectations de commutateurs partagent une lecture du contrôleur par cycle. Neck Assistant ne copie plus les réglages ni n’actualise les graphiques masqués à chaque cycle d’entrée.",
+        ["pt"] = "• Resposta HOTAS melhorada no VTrim: os eixos chegam ao vJoy antes da atualização do ecrã. Várias atribuições de interruptores partilham uma leitura do controlador por ciclo. O Neck Assistant já não copia as definições nem atualiza gráficos ocultos em cada ciclo de entrada.",
+        ["pl"] = "• Poprawiono reakcję HOTAS w VTrim: osie trafiają do vJoy przed odświeżeniem ekranu. Kilka przypisań przełączników korzysta z jednego odczytu kontrolera na cykl. Neck Assistant nie kopiuje już ustawień ani nie odświeża ukrytych wykresów przy każdym cyklu wejścia.",
+        ["ru"] = "• Улучшен отклик HOTAS в VTrim: оси передаются в vJoy до обновления экрана. Несколько назначений переключателей используют одно чтение контроллера за цикл. Neck Assistant больше не копирует настройки и не обновляет скрытые графики при каждом цикле ввода.",
+        ["uk"] = "• Покращено відгук HOTAS у VTrim: осі передаються до vJoy перед оновленням екрана. Кілька призначень перемикачів використовують одне зчитування контролера за цикл. Neck Assistant більше не копіює налаштування й не оновлює приховані графіки під час кожного циклу вводу.",
+        ["tr"] = "• VTrim HOTAS tepkisi iyileştirildi: eksenler ekran güncellenmeden önce vJoy’a gönderilir. Birden fazla anahtar ataması her döngüde tek bir denetleyici okumasını paylaşır. Neck Assistant artık her giriş döngüsünde ayarları kopyalamaz veya gizli grafikleri yenilemez.",
+        ["el"] = "• Βελτιώθηκε η απόκριση HOTAS στο VTrim: οι άξονες αποστέλλονται στο vJoy πριν ανανεωθεί η οθόνη. Πολλές αντιστοιχίσεις διακοπτών μοιράζονται μία ανάγνωση του χειριστηρίου ανά κύκλο. Το Neck Assistant δεν αντιγράφει πλέον τις ρυθμίσεις ούτε ανανεώνει κρυφά γραφήματα σε κάθε κύκλο εισόδου.",
+        ["ro"] = "• Răspuns HOTAS îmbunătățit în VTrim: axele ajung la vJoy înainte de actualizarea ecranului. Mai multe atribuiri de comutatoare folosesc o singură citire a controlerului pe ciclu. Neck Assistant nu mai copiază setările și nu mai actualizează graficele ascunse la fiecare ciclu de intrare.",
+        ["he"] = "• תגובת HOTAS ב־VTrim שופרה: הצירים נשלחים אל vJoy לפני רענון התצוגה. כמה מיפויי מתגים משתפים קריאה אחת של הבקר בכל מחזור. Neck Assistant אינו מעתיק עוד הגדרות או מרענן גרפים מוסתרים בכל מחזור קלט.",
+        ["zh-Hans"] = "• 改进了 VTrim 的 HOTAS 响应：飞行轴先发送到 vJoy，再更新界面。多个开关绑定在每个周期共用一次控制器读取。Neck Assistant 不再在每次输入轮询时复制设置或刷新隐藏图表。"
     };
+
     public static string ForLanguage(string languageCode) =>
         Translations.TryGetValue(languageCode, out string? text) ? text : Features;
 }

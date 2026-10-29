@@ -23,7 +23,7 @@ internal static class Program
     {
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
-        ButtonChecks(); TimingChecks(); ServiceChecks(); UiChecks(args.Contains("--preview")); TimerCadence();
+        ButtonChecks(); TimingChecks(); ServiceChecks(); SharedDeviceReadChecks(); UiChecks(args.Contains("--preview")); TimerCadence();
         if (args.Contains("--native-timing")) NativeTiming();
         Console.WriteLine($"PASS: {_checks} controls input, timing, persistence, cancellation and UI checks.");
     }
@@ -162,6 +162,26 @@ internal static class Program
                 bitmap.Save(Path.Combine(Environment.CurrentDirectory, "artifacts", "controls-sequence-preview.png")); form.Hide();
             }
         }
+    }
+
+    private static void SharedDeviceReadChecks()
+    {
+        string path = Path.Combine(Path.GetTempPath(), "WTA-shared-read-" + Guid.NewGuid() + ".json");
+        int reads = 0;
+        var state = new PhysicalJoystick(1, "128-button HOTAS", 0, true);
+        using var service = new AdvancedSwitchService(path, new FakeOutput(), _ =>
+        {
+            reads++;
+            return state;
+        }, () => Epoch);
+        service.Settings.Enabled = true;
+        service.Settings.Switches.Add(Definition(35));
+        service.Settings.Switches.Add(Definition(36));
+        service.Poll();
+        Check(reads == 1, "Two switch mappings on one HOTAS share one input sample");
+        state = new PhysicalJoystick(1, "128-button HOTAS", Bit(35) | Bit(36), true);
+        service.Poll();
+        Check(reads == 2, "A fresh HOTAS sample is read on the next cycle");
     }
 
     private static void TimerCadence()

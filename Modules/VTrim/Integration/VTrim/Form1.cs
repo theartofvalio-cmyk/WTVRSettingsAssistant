@@ -369,6 +369,7 @@ public partial class Form1 : Form
     {
         Interval = 15
     };
+    private double _lastFlightDisplayAt;
 
     private readonly System.Windows.Forms.Timer _vJoyAutoConnectTimer = new()
     {
@@ -5409,19 +5410,30 @@ public partial class Form1 : Form
         ApplyAutomaticInstructorMode(_lastPhysicalRoll, _lastPhysicalPitch, _lastPhysicalRudder,
             _rollInputAvailable, _pitchInputAvailable, _rudderInputAvailable,
             ref outputRoll, ref outputPitch, ref outputRudder);
-        UpdateCurvePreview(AxisTarget.Roll, _lastPhysicalRoll);
-        UpdateCurvePreview(AxisTarget.Pitch, _lastPhysicalPitch);
-        UpdateCurvePreview(AxisTarget.Rudder, _lastPhysicalRudder);
-        UpdateTrimDisplay(_lastPhysicalRoll, _lastPhysicalPitch, _lastPhysicalRudder,
-            outputRoll, outputPitch, outputRudder);
-        if (!_vJoyConnected) return;
-        try
+        // Submit flight axes before updating the dashboard. Painting is handled
+        // by the message loop and must not add latency to the current sample.
+        if (_vJoyConnected)
         {
-            _vJoy!.SendFlightAxes(outputRoll, outputPitch, outputRudder);
+            try
+            {
+                _vJoy!.SendFlightAxes(outputRoll, outputPitch, outputRudder);
+            }
+            catch (Exception exception)
+            {
+                HandleVJoyConnectionLost(VF("VJoy.OutputFailed", exception.Message));
+            }
         }
-        catch (Exception exception)
+        // The graphs and labels do not need the 15 ms flight update cadence.
+        // Rate-limit their invalidations so they cannot starve input polling.
+        double now = MonotonicSeconds;
+        if (now - _lastFlightDisplayAt >= 0.05)
         {
-            HandleVJoyConnectionLost(VF("VJoy.OutputFailed", exception.Message));
+            _lastFlightDisplayAt = now;
+            UpdateCurvePreview(AxisTarget.Roll, _lastPhysicalRoll);
+            UpdateCurvePreview(AxisTarget.Pitch, _lastPhysicalPitch);
+            UpdateCurvePreview(AxisTarget.Rudder, _lastPhysicalRudder);
+            UpdateTrimDisplay(_lastPhysicalRoll, _lastPhysicalPitch, _lastPhysicalRudder,
+                outputRoll, outputPitch, outputRudder);
         }
     }
 

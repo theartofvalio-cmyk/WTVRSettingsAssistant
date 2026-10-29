@@ -156,6 +156,7 @@ internal sealed class NeckAssistForm : Form
     private bool _simpleHoldLatched;
     private long _simpleHoldReleaseCandidateAt;
     private int _statusTicks;
+    private int _telemetryDisplayTicks;
     private bool _capturingBinding;
     private readonly Dictionary<Control, float> _themeBaseFontSizes = new();
     private bool _applyingThemeFontScale;
@@ -1219,9 +1220,17 @@ internal sealed class NeckAssistForm : Form
         _statusTimer.Tick += (_, _) =>
         {
             PollBindings();
-            _openXrBackend.UpdateMotion(_settings, _runtimeAssistanceActive);
-            RefreshTelemetry();
-            if (++_statusTicks >= 25) { _statusTicks = 0; RefreshStatus(); }
+            _openXrBackend.UpdateMotionActivity(_runtimeAssistanceActive);
+            if (++_telemetryDisplayTicks >= 4)
+            {
+                _telemetryDisplayTicks = 0;
+                if (Visible) RefreshTelemetry();
+            }
+            if (++_statusTicks >= 25)
+            {
+                _statusTicks = 0;
+                if (Visible) RefreshStatus();
+            }
         };
         Shown += (_, _) => StartAssistanceRuntime();
         FormClosed += (_, _) =>
@@ -1242,6 +1251,7 @@ internal sealed class NeckAssistForm : Form
         if (_runtimeStarted) return;
         _runtimeStarted = true;
         _openXrBackend.Apply(_settings);
+        _openXrBackend.UpdateMotion(_settings, _runtimeAssistanceActive);
         UpdateCurvePreview();
         RefreshStatus();
         _statusTimer.Start();
@@ -1412,6 +1422,7 @@ internal sealed class NeckAssistForm : Form
 
     private void SaveSettings(bool applyBackend = true)
     {
+        if (applyBackend) _openXrBackend.UpdateMotion(_settings, _runtimeAssistanceActive);
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_settingsPath)!);

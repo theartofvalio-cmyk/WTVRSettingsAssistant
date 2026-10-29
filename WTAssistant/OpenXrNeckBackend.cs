@@ -43,13 +43,23 @@ internal sealed class OpenXrNeckBackend : IDisposable
 
     public void UpdateMotion(NeckAssistSettings settings, bool runtimeActive)
     {
-        // Own the snapshot: UI curve edits must not mutate the worker's settings.
+        // Take a snapshot when settings change, not on every 16 ms UI tick.
         var snapshot = System.Text.Json.JsonSerializer.Deserialize<NeckAssistSettings>(
             System.Text.Json.JsonSerializer.Serialize(settings))!;
         lock (_motionLock)
         {
             if (_disposed) return;
             _motionSettings = snapshot;
+            _motionActive = runtimeActive;
+            _lastCommand = System.Diagnostics.Stopwatch.GetTimestamp();
+        }
+    }
+
+    public void UpdateMotionActivity(bool runtimeActive)
+    {
+        lock (_motionLock)
+        {
+            if (_disposed) return;
             _motionActive = runtimeActive;
             _lastCommand = System.Diagnostics.Stopwatch.GetTimestamp();
         }
