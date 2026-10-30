@@ -15,6 +15,33 @@ internal static class Preview
         Directory.CreateDirectory(output);
         ApplicationConfiguration.Initialize();
         using MainForm main = new(args.Contains("--startup-smoke"));
+        if (args.Contains("--theme-switch-smoke"))
+        {
+            const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Instance;
+            main.Show();
+            Application.DoEvents();
+            var home = (Control)typeof(MainForm).GetField("_aviationHome", flags)!.GetValue(main)!;
+            var logo = (PictureBox)home.GetType().GetField("_logo", flags)!.GetValue(home)!;
+            Image original = logo.Image!;
+            Type themeType = typeof(MainForm).Assembly.GetType("WTVRSettingsAssistant.AppThemeAssets")!;
+            string ActiveTheme() => (string)themeType.GetProperty("ActiveTheme", BindingFlags.Public | BindingFlags.Static)!.GetValue(null)!;
+            string first = ActiveTheme();
+            string second = first == "F16" ? "MiG29" : "F16";
+            typeof(MainForm).GetField("_uiTheme", flags)!.SetValue(main, second);
+            typeof(MainForm).GetMethod("ApplyThemeWithoutRestart", flags)!.Invoke(main, null);
+            Application.DoEvents();
+            if (main.IsDisposed || !ReferenceEquals(home, typeof(MainForm).GetField("_aviationHome", flags)!.GetValue(main)) ||
+                ReferenceEquals(original, logo.Image) || ActiveTheme() != second)
+                throw new Exception("Theme did not update in the live window.");
+            typeof(MainForm).GetField("_uiTheme", flags)!.SetValue(main, first);
+            typeof(MainForm).GetMethod("ApplyThemeWithoutRestart", flags)!.Invoke(main, null);
+            if (ActiveTheme() != first)
+                throw new Exception("Theme did not switch back in the live window.");
+            typeof(MainForm).GetField("_allowExit", flags)!.SetValue(main, true);
+            main.Close();
+            Console.WriteLine("PASS: Theme switches both ways without restarting the window.");
+            return;
+        }
         if (args.Contains("--startup-smoke"))
         {
             const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Instance;
@@ -32,8 +59,14 @@ internal static class Preview
             Application.DoEvents();
             if (!main.Visible || !main.ShowInTaskbar || main.WindowState != FormWindowState.Normal)
                 throw new Exception("Restoring the startup instance did not show a normal window.");
+            DateTime webStartDeadline = DateTime.UtcNow.AddSeconds(5);
+            while (webViewField.GetValue(home) is null && DateTime.UtcNow < webStartDeadline)
+            {
+                Application.DoEvents();
+                Thread.Sleep(20);
+            }
             if (webViewField.GetValue(home) is null)
-                throw new Exception("WebView2 was not started after restoring the Home page.");
+                throw new Exception($"WebView2 was not started after restoring the Home page (home visible={home.Visible}, parent visible={home.Parent?.Visible}, fallback locked={home.GetType().GetField("_webFallbackLocked", flags)!.GetValue(home)}, cover visible={((Control)home.GetType().GetField("_webLoadingCover", flags)!.GetValue(home)!).Visible}, error={home.GetType().GetField("_webInitializationError", flags)!.GetValue(home)}).");
             var homePanel = (Panel)typeof(MainForm).GetField("_mainPanel", flags)!.GetValue(main)!;
             Rectangle expected = new(main.Padding.Left, main.Padding.Top,
                 main.ClientSize.Width - main.Padding.Horizontal,

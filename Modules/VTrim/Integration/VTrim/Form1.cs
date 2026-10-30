@@ -25,6 +25,37 @@ public partial class Form1 : Form
 {
     public static void SetHostVisualTheme(string? themeName) => Theme.ApplyVariant(themeName);
 
+    public void ApplyHostVisualTheme(string? themeName)
+    {
+        var paletteFields = typeof(Theme).GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(field => field.FieldType == typeof(Color)).ToArray();
+        Color[] before = paletteFields.Select(field => (Color)field.GetValue(null)!).ToArray();
+        Theme.ApplyVariant(themeName);
+        var replacements = new Dictionary<int, Color>();
+        for (int i = 0; i < paletteFields.Length; i++)
+            replacements[before[i].ToArgb()] = (Color)paletteFields[i].GetValue(null)!;
+
+        void Recolor(Control control)
+        {
+            if (replacements.TryGetValue(control.BackColor.ToArgb(), out Color background))
+                control.BackColor = background;
+            if (replacements.TryGetValue(control.ForeColor.ToArgb(), out Color foreground))
+                control.ForeColor = foreground;
+            if (control is Button button)
+            {
+                if (replacements.TryGetValue(button.FlatAppearance.BorderColor.ToArgb(), out Color border))
+                    button.FlatAppearance.BorderColor = border;
+                if (replacements.TryGetValue(button.FlatAppearance.MouseOverBackColor.ToArgb(), out Color hover))
+                    button.FlatAppearance.MouseOverBackColor = hover;
+                if (replacements.TryGetValue(button.FlatAppearance.MouseDownBackColor.ToArgb(), out Color pressed))
+                    button.FlatAppearance.MouseDownBackColor = pressed;
+            }
+            foreach (Control child in control.Controls) Recolor(child);
+            control.Invalidate();
+        }
+        Recolor(this);
+    }
+
     private enum TrimAction
     {
         NoseDown,
@@ -548,8 +579,8 @@ public partial class Form1 : Form
 
         Shown += (_, _) =>
         {
-            RefreshDevices();
             StartFlightAxisWorker();
+            RefreshDevices();
             _pollTimer.Start();
             _warThunderTelemetryTimer.Start();
             StartAutomaticVJoyConnection();
@@ -4960,7 +4991,7 @@ public partial class Form1 : Form
 
         foreach (InputDevice device in _devices.Values)
         {
-            if (!TryReadState(device, out DirectInputState state))
+            if (!TryReadCurrentState(device, out DirectInputState state))
             {
                 continue;
             }
@@ -5020,6 +5051,8 @@ public partial class Form1 : Form
         ResetAutomaticInstructorHold();
         _pollTimer.Stop();
         _flightAxisWorker?.Configure(null);
+        _flightAxisWorker?.ConfigureUiRoutes([]);
+        _uiInputWorker?.Configure(null);
         _flightAxisWorker?.SetOutputActive(false);
         _publishedFlightConfiguration = null;
 
@@ -5103,14 +5136,24 @@ public partial class Form1 : Form
 
                     inputDevice.Acquire();
 
-                    var item = new InputDevice
+                    var initialReader = new InputDevice
                     {
                         Guid = instance.InstanceGuid,
                         FriendlyName = friendlyName,
                         Device = inputDevice
                     };
-
-                    if (TryReadState(item, out DirectInputState initialState))
+                    bool hasInitialState = TryReadState(initialReader, out DirectInputState initialState);
+                    // The flight worker owns the acquired DirectInput handle
+                    // during play. Enumeration must not retain another one.
+                    bool workerOwnsInput = _flightAxisWorker is not null;
+                    if (workerOwnsInput) initialReader.Dispose();
+                    var item = new InputDevice
+                    {
+                        Guid = instance.InstanceGuid,
+                        FriendlyName = friendlyName,
+                        Device = workerOwnsInput ? null : inputDevice
+                    };
+                    if (hasInitialState)
                     {
                         item.PreviousState = initialState;
                     }
@@ -5193,6 +5236,7 @@ public partial class Form1 : Form
         finally
         {
             PublishFlightConfiguration();
+            PublishUiInputRoutes();
             _flightAxisWorker?.SetOutputActive(_vJoyConnected);
             _pollTimer.Start();
         }
@@ -5200,14 +5244,27 @@ public partial class Form1 : Form
 
     private void PollTimer_Tick(object? sender, EventArgs e)
     {
-        Dictionary<Guid, DirectInputState> currentStates = new();
-
-        foreach (InputDevice device in _devices.Values)
+        _flightAxisWorker?.ObserveUiTick();
+        IReadOnlyDictionary<Guid, DirectInputState> currentStates;
+        if (_flightAxisWorker is not null)
         {
-            if (TryReadState(device, out DirectInputState state))
+            var snapshots = new Dictionary<Guid, DirectInputState>();
+            UiInputSnapshot? flight = _flightAxisWorker.UiLatest;
+            UiInputSnapshot? other = _uiInputWorker?.Latest;
+            if (flight is not null && Environment.TickCount64 - flight.ReadAt <= 250)
+                foreach (var pair in flight.States) snapshots[pair.Key] = pair.Value;
+            if (other is not null && Environment.TickCount64 - other.ReadAt <= 250)
+                foreach (var pair in other.States) snapshots.TryAdd(pair.Key, pair.Value);
+            currentStates = snapshots;
+        }
+        else
+        {
+            var directStates = new Dictionary<Guid, DirectInputState>();
+            foreach (InputDevice device in _devices.Values)
             {
-                currentStates[device.Guid] = state;
+                if (TryReadState(device, out DirectInputState state)) directStates[device.Guid] = state;
             }
+            currentStates = directStates;
         }
 
         if (_detectingAxis.HasValue)
@@ -5260,18 +5317,13 @@ public partial class Form1 : Form
             consumeButtonInput = true;
         }
 
-        if (!consumeButtonInput)
-        {
-            UpdatePhysicalAxisSnapshot(
-                currentStates);
-
-            ProcessTrimBindings(currentStates);
-        }
+        UpdatePhysicalAxisSnapshot(currentStates);
+        if (!consumeButtonInput) ProcessTrimBindings(currentStates);
 
         PublishFlightConfiguration();
         if (_flightAxisWorker?.TakeOutputError() is string outputError && _vJoyConnected)
             HandleVJoyConnectionLost(VF("VJoy.OutputFailed", outputError));
-        ProcessLiveAxes(currentStates);
+        ProcessLiveAxes();
 
         foreach ((Guid guid, DirectInputState state) in currentStates)
         {
@@ -5422,10 +5474,8 @@ public partial class Form1 : Form
             _rudderInputAvailable ? result.Rudder : 0);
     }
 
-    private void ProcessLiveAxes(
-        IReadOnlyDictionary<Guid, DirectInputState> currentStates)
+    private void ProcessLiveAxes()
     {
-        UpdatePhysicalAxisSnapshot(currentStates);
         double outputRoll = _currentManualCommand.Roll;
         double outputPitch = _currentManualCommand.Pitch;
         double outputRudder = _currentManualCommand.Rudder;
@@ -5454,6 +5504,7 @@ public partial class Form1 : Form
         }
         // Keep the live markers at the UI polling cadence. Text and curve
         // panels can refresh more slowly without making motion look stepped.
+        if (!Visible) return;
         double now = MonotonicSeconds;
         UpdateTrimDisplay(_lastPhysicalRoll, _lastPhysicalPitch, _lastPhysicalRudder,
             outputRoll, outputPitch, outputRudder, updateMeters: false);
@@ -5801,7 +5852,7 @@ public partial class Form1 : Form
              sampleIndex < 25;
              sampleIndex++)
         {
-            if (TryReadState(
+            if (TryReadCurrentState(
                     device,
                     out DirectInputState state) &&
                 TryReadAxisRaw(
@@ -8184,6 +8235,20 @@ public partial class Form1 : Form
 
         _directInput?.Dispose();
         _directInput = null;
+    }
+
+    private bool TryReadCurrentState(InputDevice device, out DirectInputState state)
+    {
+        if (_flightAxisWorker is not null)
+        {
+            foreach (UiInputSnapshot? snapshot in new[] { _flightAxisWorker.UiLatest, _uiInputWorker?.Latest })
+                if (snapshot is not null && Environment.TickCount64 - snapshot.ReadAt <= 100 &&
+                    snapshot.States.TryGetValue(device.Guid, out DirectInputState? current))
+                { state = current; return true; }
+            state = new DirectInputState();
+            return false;
+        }
+        return TryReadState(device, out state);
     }
 
     private static bool TryReadState(

@@ -3060,6 +3060,8 @@ render{
     private AppliedMode _lastAppliedMode = AppliedMode.None;
 
     private Image _mainLogo = null!;
+    private readonly Dictionary<string, Image> _themeLogos = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Icon> _themeIcons = new(StringComparer.OrdinalIgnoreCase);
     private Image _infoImage = null!;
     private Image _settingsImage = null!;
     private Image _homeImage = null!;
@@ -3117,6 +3119,9 @@ render{
 
     private static string AppFolder =>
         AppContext.BaseDirectory;
+
+    private static bool IsLocalTestBuild =>
+        File.Exists(Path.Combine(AppFolder, "LOCAL-TEST-BUILD.txt"));
 
     private static string SettingsFolder =>
         Path.Combine(AppFolder, "Settings");
@@ -3185,7 +3190,7 @@ render{
         _launchToTray = launchToTray;
         AutoScaleMode = AutoScaleMode.None;
 
-        Text = "War Thunder VR Assistant";
+        Text = "War Thunder VR Assistant" + (IsLocalTestBuild ? " [LOCAL TEST]" : "");
         HandleCreated += (_,_) => IllustratedTheme.ApplyWindowChrome(this);
         // 1.8.1 could start at 1300x675 and then expose scrollbars at common
         // Windows DPI settings. The illustrated dashboard is designed around a
@@ -3319,7 +3324,7 @@ render{
     private void ApplyLocalization()
     {
         _languageCode = AppText.Normalize(_languageCode);
-        Text = "War Thunder VR Assistant";
+        Text = "War Thunder VR Assistant" + (IsLocalTestBuild ? " [LOCAL TEST]" : "");
         _aviationHome?.SetLanguage(_languageCode);
         if (_themeNavigation != null)
         {
@@ -3570,7 +3575,9 @@ render{
     {
         try
         {
-            Icon = AssetManager.LoadIcon("Icon.ico");
+            Icon loadedIcon = AssetManager.LoadIcon("Icon.ico");
+            Icon = loadedIcon;
+            _themeIcons[AppThemeAssets.ActiveTheme] = loadedIcon;
         }
         catch
         {
@@ -3578,6 +3585,7 @@ render{
         }
 
         _mainLogo = SafeLoadImage("MainScreenLogo.png");
+        _themeLogos[AppThemeAssets.ActiveTheme] = _mainLogo;
 
         _infoImage = SafeLoadImage("Info.png");
         _settingsImage = SafeLoadImage("Settings.png");
@@ -4858,10 +4866,35 @@ render{
         }
         SaveState();
         if (!string.Equals(previousTheme, _uiTheme, StringComparison.OrdinalIgnoreCase))
+            ApplyThemeWithoutRestart();
+    }
+
+    private void ApplyThemeWithoutRestart()
+    {
+        AppThemeAssets.SetActiveTheme(_uiTheme);
+        if (_themeIcons.TryGetValue(_uiTheme, out Icon? cachedIcon)) Icon = cachedIcon;
+        else
         {
-            _allowExit = true;
-            Application.Restart();
+            try
+            {
+                Icon loadedIcon = AssetManager.LoadIcon("Icon.ico");
+                Icon = loadedIcon;
+                _themeIcons[_uiTheme] = loadedIcon;
+            }
+            catch { }
         }
+        if (_themeLogos.TryGetValue(_uiTheme, out Image? cachedLogo))
+            _mainLogo = cachedLogo;
+        else
+            _themeLogos[_uiTheme] = _mainLogo = SafeLoadImage("MainScreenLogo.png");
+        _aviationHome?.ApplyThemeAssets(_mainLogo);
+        if (_vtrimForm is { IsDisposed: false })
+            _vtrimForm.ApplyHostVisualTheme(_uiTheme);
+        else
+            HOTASTrimUtility.Form1.SetHostVisualTheme(_uiTheme);
+        IllustratedTheme.ApplyWindowChrome(this);
+        _themeNavigation?.Invalidate(true);
+        Invalidate(true);
     }
 
     private void ConfigureTrayIcon()
@@ -4912,6 +4945,7 @@ render{
 
     private static bool SetWindowsStartup(bool enabled)
     {
+        if (IsLocalTestBuild) return true;
         try
         {
             using RegistryKey? runKey = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
@@ -8106,6 +8140,13 @@ render{
 
     private async Task CheckForUpdatesAsync(bool interactive)
     {
+        if (IsLocalTestBuild)
+        {
+            if (interactive)
+                MessageBox.Show(this, "Updates are disabled in this local test build.",
+                    T("Update.Title"), MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
         if (_updateCheckInProgress) return;
         if (IsWarThunderRunningOrStarting())
         {

@@ -252,6 +252,10 @@ internal sealed class HiddenKeybindsForm : Form
         _status.SetBounds(32, 956, 1320, 34);
         _status.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         Controls.Add(_status);
+        VisibleChanged += (_, _) =>
+        {
+            if (Visible && !IsDisposed) _status.Text = _advancedSwitchService.LastStatus;
+        };
 
         Label notice = MakeLabel("Important: keep War Thunder VR Assistant running while using these bindings. If War Thunder runs as administrator, run this app as administrator too so the keyboard commands can reach the game.", 10.5f, FontStyle.Italic, ThemePalette.FromArgb(255, 190, 70));
         notice.SetBounds(32, 1000, 1320, 48);
@@ -390,7 +394,7 @@ internal sealed class HiddenKeybindsForm : Form
         // Polling continues while this page is hidden and can report during the
         // manager's first handle creation. Never BeginInvoke onto a missing or
         // destroying handle; that race previously terminated the application.
-        if (IsDisposed || Disposing || !IsHandleCreated) return;
+        if (IsDisposed || Disposing || !IsHandleCreated || !Visible) return;
         try
         {
             BeginInvoke((Action)(() =>

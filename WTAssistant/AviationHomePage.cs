@@ -10,6 +10,9 @@ namespace WTVRSettingsAssistant;
 
 internal sealed class AviationHomePage : UserControl
 {
+    private sealed record HomeArtwork(Image? Monitor, Image? Vr, Image? Neck, Image? Keys,
+        Image? Trim, Image? Launch, Image? Update, Image? Running);
+    private readonly Dictionary<string, HomeArtwork> _artworkByTheme = new(StringComparer.OrdinalIgnoreCase);
     private readonly AlphaPictureBox _logo;
     private WebView2? _webView;
     private readonly Panel _webLoadingCover;
@@ -17,6 +20,8 @@ internal sealed class AviationHomePage : UserControl
     private string? _lastWebState;
     private double[]? _webHeroMetrics;
     private bool _webFallbackLocked;
+    private string? _webInitializationError;
+    private int _webInitializationRetries;
     private System.Windows.Forms.Timer? _webInitWatchdog;
     private Control? _desktopProfileSelector;
     private Control? _vrProfileSelector;
@@ -150,6 +155,8 @@ internal sealed class AviationHomePage : UserControl
         Image? redLaunchFrame = LoadOptionalAsset("PlayButton.png") ?? LoadOptionalAsset("Launch_Red_Frame.png");
         Image? updateLaunchFrame = LoadOptionalAsset("UpdateButton.png") ?? LoadOptionalAsset("Launch_Update_Gold.png");
         Image? runningLaunchFrame = LoadOptionalAsset("GameStarted.png") ?? redLaunchFrame;
+        _artworkByTheme[AppThemeAssets.ActiveTheme] = new HomeArtwork(monitorImage, vrImage,
+            cleanNeckImage, cleanKeysImage, trimImage, redLaunchFrame, updateLaunchFrame, runningLaunchFrame);
 
         _monitor = new AviationActionCard("MONITOR", "monitor", monitorImage, monitor);
         _vr = new AviationActionCard("VR", "visor", vrImage, vr);
@@ -307,6 +314,41 @@ internal sealed class AviationHomePage : UserControl
         if (_webReady && languageChanged) PushWebState();
     }
 
+    public void ApplyThemeAssets(Image logo)
+    {
+        _logo.Image = logo;
+        if (!_artworkByTheme.TryGetValue(AppThemeAssets.ActiveTheme, out HomeArtwork? artwork))
+        {
+            Image? normal = LoadOptionalAsset("PlayButton.png") ?? LoadOptionalAsset("Launch_Red_Frame.png");
+            artwork = new HomeArtwork(
+                LoadOptionalAsset("Home_Monitor_New.png"), LoadOptionalAsset("Home_VR_New.png"),
+                LoadOptionalAsset("IllustratedHead.png") ?? LoadOptionalAsset("NeckAssist_Active.png"),
+                LoadOptionalAsset("IllustratedKeys.png") ?? LoadOptionalAsset("HiddenKeybinds-v3.png"),
+                LoadOptionalAsset("Home_VTrim_New.png"), normal,
+                LoadOptionalAsset("UpdateButton.png") ?? LoadOptionalAsset("Launch_Update_Gold.png"),
+                LoadOptionalAsset("GameStarted.png") ?? normal);
+            _artworkByTheme[AppThemeAssets.ActiveTheme] = artwork;
+        }
+        _monitor.SetArtwork(artwork.Monitor);
+        _vr.SetArtwork(artwork.Vr);
+        _neck.SetArtwork(artwork.Neck);
+        _keys.SetArtwork(artwork.Keys);
+        _trim.SetArtwork(artwork.Trim);
+        _launch.SetArtwork(artwork.Launch, artwork.Update, artwork.Running);
+        if (_webView is { CoreWebView2: not null } view)
+        {
+            try
+            {
+                string folder = PrepareWebAssetFolder();
+                view.CoreWebView2.SetVirtualHostNameToFolderMapping(
+                    "wtassets.local", folder, CoreWebView2HostResourceAccessKind.Allow);
+                ReloadWebUi();
+            }
+            catch { SwitchToNativeFallback(); }
+        }
+        Invalidate(true);
+    }
+
     private static bool ShouldUseEnhancedWebUi()
     {
         try
@@ -461,6 +503,8 @@ internal sealed class AviationHomePage : UserControl
                     return;
                 }
                 _webReady = true;
+                _webInitializationRetries = 0;
+                _webInitializationError = null;
                 _lastWebState = null;
                 _webInitWatchdog?.Stop();
                 _webLoadingCover.Visible = false;
@@ -475,11 +519,24 @@ internal sealed class AviationHomePage : UserControl
 
             view.NavigateToString(BuildWebHtml());
         }
-        catch
+        catch (Exception exception)
         {
+            _webInitializationError = exception.ToString();
             _webInitWatchdog?.Stop();
             DiscardWebView(view);
-            if (!IsDisposed && !Disposing) SwitchToNativeFallback();
+            if (IsDisposed || Disposing) return;
+            SwitchToNativeFallback();
+            // Windows can reject controller creation while a restored window is
+            // still changing state. Keep the native Home usable and try again.
+            if (exception.HResult == unchecked((int)0x8007139F) && _webInitializationRetries++ < 3)
+            {
+                _webFallbackLocked = false;
+                await Task.Delay(400);
+                if (Visible && FindForm()?.WindowState == FormWindowState.Normal)
+                    await InitializeWebSurfaceAsync(monitor, vr, openNeck, toggleNeck, openKeys, toggleKeys,
+                        serverChanged, refreshServers, launch, logoClick, discord, youtube, support,
+                        openTrim, toggleTrim);
+            }
         }
     }
 
@@ -598,23 +655,23 @@ internal sealed class AviationHomePage : UserControl
 
     private string BuildWebHtml()
     {
-        const string assetRoot = "https://wtassets.local/";
-        string logo = assetRoot + "logo.png";
-        string monitor = assetRoot + "monitor.png";
-        string vr = assetRoot + "vr.png";
-        string neck = assetRoot + "neck.png";
-        string keybind = assetRoot + "keybind.png";
-        string trim = assetRoot + "vtrim.png";
-        string launchNormal = assetRoot + "launch-normal.png";
-        string launchUpdate = assetRoot + "launch-update.png";
-        string launchRunning = assetRoot + "launch-running.png";
-        string liveIcon = assetRoot + "live.png";
-        string liveActiveIcon = assetRoot + "live-active.png";
-        string testIcon = assetRoot + "test.png";
-        string testActiveIcon = assetRoot + "test-active.png";
-        string discordIcon = assetRoot + "discord.png";
-        string youtubeIcon = assetRoot + "youtube.png";
-        string supportIcon = assetRoot + "support.png";
+        string AssetUrl(string name) => "https://wtassets.local/" + name + "?theme=" + AppThemeAssets.ActiveTheme;
+        string logo = AssetUrl("logo.png");
+        string monitor = AssetUrl("monitor.png");
+        string vr = AssetUrl("vr.png");
+        string neck = AssetUrl("neck.png");
+        string keybind = AssetUrl("keybind.png");
+        string trim = AssetUrl("vtrim.png");
+        string launchNormal = AssetUrl("launch-normal.png");
+        string launchUpdate = AssetUrl("launch-update.png");
+        string launchRunning = AssetUrl("launch-running.png");
+        string liveIcon = AssetUrl("live.png");
+        string liveActiveIcon = AssetUrl("live-active.png");
+        string testIcon = AssetUrl("test.png");
+        string testActiveIcon = AssetUrl("test-active.png");
+        string discordIcon = AssetUrl("discord.png");
+        string youtubeIcon = AssetUrl("youtube.png");
+        string supportIcon = AssetUrl("support.png");
 
         static string Hex(Color c) => $"#{c.R:X2}{c.G:X2}{c.B:X2}";
         string themeClass = AppThemeAssets.ActiveTheme.Equals("MiG29", StringComparison.OrdinalIgnoreCase) ? "mig" : "f16";
@@ -833,6 +890,7 @@ window.wtApplyState=s=>{
         foreach ((string targetName, string[] candidates) in assets)
         {
             string target = Path.Combine(root, targetName);
+            if (File.Exists(target) && new FileInfo(target).Length > 0) continue;
             bool written = false;
             foreach (string sourceName in candidates)
             {
@@ -857,6 +915,7 @@ window.wtApplyState=s=>{
         void SaveDrawnIcon(string fileName, string iconName, Color color)
         {
             string target = Path.Combine(root, fileName);
+            if (File.Exists(target) && new FileInfo(target).Length > 0) return;
             using Bitmap bitmap = new(160, 160, PixelFormat.Format32bppArgb);
             using Graphics graphics = Graphics.FromImage(bitmap);
             graphics.Clear(Color.Transparent);
@@ -1111,8 +1170,8 @@ internal sealed class AlphaPictureBox : PictureBox
 internal class AviationActionCard : Control
 {
     private readonly string _icon;
-    private readonly Image? _image;
-    private readonly Rectangle _sourceBounds;
+    private Image? _image;
+    private Rectangle _sourceBounds;
     private readonly Action _click;
     private bool _active;
     private readonly ToolTip _toolTip = new() { InitialDelay = 350, ReshowDelay = 100, AutoPopDelay = 6000 };
@@ -1133,6 +1192,13 @@ internal class AviationActionCard : Control
     }
 
     public void UpdateToolTip() => AccessibleName = Text + (Active ? " · " + _onText : " · " + _offText);
+
+    public void SetArtwork(Image? image)
+    {
+        _image = image;
+        _sourceBounds = image is null ? Rectangle.Empty : FindVisibleSourceBounds(image);
+        Invalidate();
+    }
 
     public AviationActionCard(string text, string icon, Image? image, Action click)
     {
@@ -1401,9 +1467,17 @@ internal sealed class AviationServerSelector : Control
 internal sealed class AviationLaunchButton : Control
 {
     private readonly Action _click;
-    private readonly Image? _launchFrame;
-    private readonly Image? _updateFrame;
-    private readonly Image? _runningFrame;
+    private Image? _launchFrame;
+    private Image? _updateFrame;
+    private Image? _runningFrame;
+
+    public void SetArtwork(Image? normal, Image? update, Image? running)
+    {
+        _launchFrame = normal;
+        _updateFrame = update;
+        _runningFrame = running;
+        Invalidate();
+    }
     private bool _canLaunch;
     private bool _updateAvailable;
     private bool _gameRunning;

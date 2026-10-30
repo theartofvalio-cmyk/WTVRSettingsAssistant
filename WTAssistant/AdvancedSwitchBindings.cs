@@ -456,7 +456,7 @@ internal sealed partial class AdvancedSwitchService : IDisposable
         if (deviceStates is not null && deviceStates.TryGetValue(key, out PhysicalJoystick? cached)) return cached;
         PhysicalJoystick? device = _reader is not null
             ? _reader(definition)
-            : ControlsJoystickReader.Read(definition.DeviceId, definition.DeviceName, definition.DeviceGuid);
+            : ControlsJoystickReader.ReadBackground(definition.DeviceId, definition.DeviceName, definition.DeviceGuid);
         if (_reader is not null)
         {
             deviceStates?.Add(key, device);
@@ -597,6 +597,7 @@ internal sealed partial class AdvancedSwitchService : IDisposable
 
     private void SetStatus(string text)
     {
+        if (string.Equals(LastStatus, text, StringComparison.Ordinal)) return;
         LastStatus = text;
         StatusChanged?.Invoke(text);
     }

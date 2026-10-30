@@ -1,8 +1,8 @@
-# Validation for War Thunder VR Assistant v2.0.13
+# Validation for War Thunder VR Assistant v2.0.14
 
 On Windows with the .NET 10 SDK, run `Run-Tests.cmd` for the layout audit and managed GameServices, aircraft data, and VTrim tests. Run `dotnet run --project WTAssistant/verification/ThemePreview/ThemePreview.csproj -c Release -p:Platform=x86 -- --startup-smoke` to check Windows startup, WebView2 deferral, repeated tray restore, and saved window size.
 
-Run `Build.cmd` for the self-contained x86 publish and packaged executable self-test. The release ZIP must contain the executable, native DLLs, Drivers, and Licenses at its root, with no personal Settings folder. Confirm file version 2.0.13.0, product version 2.0.13, and a passing `--self-test` report.
+Run `Build.cmd` for the self-contained x86 publish and packaged executable self-test. The release ZIP must contain the executable, native DLLs, Drivers, and Licenses at its root, with no personal Settings folder. Confirm file version 2.0.14.0, product version 2.0.14, and a passing `--self-test` report.
 
 The automated tests simulate input and game state. Physical HOTAS, vJoy, VR runtime, and War Thunder behavior still require a real-device acceptance test.
 
@@ -34,3 +34,11 @@ Local v2.0.13 verification (29 October 2026):
 - The release ZIP contains exactly seven runtime, driver, and license files, with no settings or profiles. SHA-256: `2f3dda858d50fdf8add94f902451d2133aef3768c56643c962d82752780ea1e0`.
 - Physical HOTAS and War Thunder gameplay were unavailable for local acceptance testing.
 - The optional Home-page startup smoke check failed because its WebView2 field was still null immediately after tray restore; the VTrim and packaged app checks above passed. The Home-page path was not changed in this release.
+
+Local v2.0.14 verification (30 October 2026):
+
+- The user tested the local build with their HOTAS and reported that the stick movement is now smooth in the preview and game.
+- Layout audit, NeckSpeed, ControlsInput, GameServices, AircraftData, and VTrim.Core all passed. VTrim.Core reported 62 passed and 0 failed.
+- Theme switching in both directions passed without restarting the window. Windows startup, WebView2 initialization after tray restore, and window-size preservation passed.
+- The clean self-contained x86 executable reports file version 2.0.14.0 and product version 2.0.14. Its packaged `--self-test` passed with zero failures and zero warnings.
+- The release ZIP contains exactly seven runtime, driver, and license files, with no settings, profiles, diagnostics, or local-test marker. SHA-256: `0fc3931c7c2e113a78cf7281a0879eba84352f27b167df66ca3cd9fb2737071d`.

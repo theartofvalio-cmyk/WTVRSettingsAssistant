@@ -55,6 +55,7 @@ public static class VTrimSelfTest
 
             failures.AddRange(Form1.RunProfileStorageSelfTests());
             Check(Form1.RunFlightWorkerSelfTest(), "Flight axes keep updating during UI stalls and stop on disconnect");
+            Check(Form1.RunUiInputWorkerSelfTest(), "UI input snapshots keep updating during UI stalls");
 
             // Telemetry profiles created while the index loads must later find
             // the correct artwork and category for any helicopter family.

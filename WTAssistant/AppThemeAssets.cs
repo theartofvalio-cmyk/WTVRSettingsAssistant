@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Collections.Concurrent;
 
 namespace WTVRSettingsAssistant;
 
@@ -14,6 +15,7 @@ internal static class AppThemeAssets
     public const string LegacyTheme = "Main";
 
     private static readonly string[] ThemeOrder = ["F16", "MiG29"];
+    private static readonly ConcurrentDictionary<Assembly, string[]> ResourceNames = new();
 
     public static string ActiveTheme { get; private set; } = DefaultTheme;
 
@@ -53,7 +55,7 @@ internal static class AppThemeAssets
 
         string leafName = Path.GetFileName(fileName);
         string fileSuffix = "." + leafName;
-        string[] names = assembly.GetManifestResourceNames();
+        string[] names = ResourceNames.GetOrAdd(assembly, static source => source.GetManifestResourceNames());
 
         string? FindTheme(string theme) => names.FirstOrDefault(name =>
             name.Contains($".Assets.Themes.{theme}.", StringComparison.OrdinalIgnoreCase) &&
